@@ -40,7 +40,9 @@ class StreamAnomalyInference:
     def _load_model(self):
         """Load (or reload) the model from disk."""
         if not os.path.exists(MODEL_PATH):
-            logger.warning("stream_inference_model_not_found", path=MODEL_PATH)
+            logger.info("stream_inference_model_not_found", 
+                       path=MODEL_PATH,
+                       message="Anomaly detection will use rule-based only. To train: python ml/training/train_anomaly_model.py")
             self._model = None
             return False
 

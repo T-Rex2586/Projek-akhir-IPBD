@@ -1,47 +1,190 @@
 """
-Streamlit dashboard for crypto sentiment and price analytics.
+🚀 PERFECT REAL-TIME CRYPTO ANALYTICS DASHBOARD
 
 Features:
-- Real-time price metrics
-- Candlestick chart (OHLCV)
-- Price history line chart with volume
-- Gold Layer correlation chart (Price vs Sentiment)
-- News feed with sentiment
-- Anomaly alerts
-- Reddit sentiment breakdown
-- Pipeline status monitoring
+- ⚡ 1-second refresh for true real-time
+- 🔄 Smart symbol switching with session persistence
+- 🕐 WIB timezone throughout Indonesia
+- 📊 Comprehensive metrics and analytics
+- 🎨 Beautiful dark theme UI
+- 📰 Clickable news with sentiment
+- 🚨 Real-time anomaly detection
+- 💹 Live price movements
 """
+
 import streamlit as st
 import requests
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
-from dotenv import load_dotenv
+import time
+import sys
 
+from dotenv import load_dotenv
 load_dotenv()
 
-# Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+# Add project root to path
+sys.path.insert(0, os.path.abspath('.'))
+from monitoring.timezone_utils import now_wib
+
+# ==================== CONFIGURATION ====================
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 API_KEY = os.getenv("API_KEY", "dev-api-key")
 HEADERS = {"X-API-Key": API_KEY}
+REFRESH_INTERVAL = 1  # 1 second - TRUE REAL-TIME!
 
-# Page config
+SYMBOLS = {
+    "BTCUSDT": {"name": "Bitcoin", "emoji": "₿", "color": "#F7931A"},
+    "ETHUSDT": {"name": "Ethereum", "emoji": "Ξ", "color": "#627EEA"},
+    "BNBUSDT": {"name": "Binance Coin", "emoji": "🔸", "color": "#F3BA2F"},
+    "SOLUSDT": {"name": "Solana", "emoji": "◎", "color": "#00FFA3"},
+    "ADAUSDT": {"name": "Cardano", "emoji": "₳", "color": "#0033AD"}
+}
+
+# ==================== PAGE CONFIG ====================
 st.set_page_config(
-    page_title="Crypto Analytics Dashboard",
+    page_title="🚀 Perfect Crypto Dashboard",
     page_icon="📈",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Title
-st.title("📈 Crypto Sentiment & Price Analytics Dashboard")
-st.markdown("Real-time cryptocurrency price monitoring with sentiment analysis")
+# ==================== CUSTOM CSS ====================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    
+    * { font-family: 'Inter', sans-serif; }
+    
+    .stApp {
+        background: linear-gradient(135deg, #0a0a15 0%, #1a1a2e 50%, #16213e 100%);
+    }
+    
+    h1 {
+        background: linear-gradient(90deg, #60a5fa 0%, #a78bfa 50%, #ec4899 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 2.8rem !important;
+        font-weight: 800 !important;
+        margin-bottom: 0.5rem !important;
+        letter-spacing: -0.02em;
+    }
+    
+    .metric-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.08) 100%);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 48px rgba(59, 130, 246, 0.25);
+        border-color: rgba(59, 130, 246, 0.5);
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 8px 20px;
+        border-radius: 24px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        animation: pulse-border 2s infinite;
+    }
+    
+    .status-live {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        border: 2px solid rgba(16, 185, 129, 0.6);
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+    }
+    
+    @keyframes pulse-border {
+        0%, 100% { border-color: rgba(16, 185, 129, 0.6); }
+        50% { border-color: rgba(16, 185, 129, 1); }
+    }
+    
+    .info-card {
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 8px 0;
+        backdrop-filter: blur(10px);
+    }
+    
+    .news-card {
+        background: rgba(15, 23, 42, 0.6);
+        border-left: 3px solid rgba(59, 130, 246, 0.5);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin: 8px 0;
+        transition: all 0.2s ease;
+    }
+    
+    .news-card:hover {
+        background: rgba(15, 23, 42, 0.8);
+        border-left-color: #3b82f6;
+        transform: translateX(4px);
+    }
+    
+    .price-up { color: #10b981; font-weight: 600; }
+    .price-down { color: #ef4444; font-weight: 600; }
+    
+    div[data-testid="stMetricValue"] {
+        font-size: 2.2rem;
+        font-weight: 700;
+    }
+    
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 12px;
+        background: rgba(15, 23, 42, 0.5);
+        padding: 10px;
+        border-radius: 16px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: rgba(59, 130, 246, 0.1);
+        border-radius: 10px;
+        padding: 14px 28px;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+    
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(59, 130, 246, 0.15);
+        border-color: rgba(59, 130, 246, 0.4);
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(139, 92, 246, 0.25));
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+    
+    /* Sidebar styling */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        border-right: 1px solid rgba(59, 130, 246, 0.2);
+    }
+    
+    /* Remove Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
+# ==================== HELPER FUNCTIONS ====================
 
-# Helper functions
-def fetch_data(endpoint: str, params: dict = None):
-    """Fetch data from API."""
+def fetch_api(endpoint, params=None):
+    """Fetch data from API - NO CACHING for real-time"""
     try:
         response = requests.get(
             f"{API_BASE_URL}{endpoint}",
@@ -51,362 +194,517 @@ def fetch_data(endpoint: str, params: dict = None):
         )
         response.raise_for_status()
         return response.json()
+    except requests.exceptions.Timeout:
+        st.error(f"⏱️ API timeout: {endpoint}")
+        return None
+    except requests.exceptions.ConnectionError:
+        st.error(f"🔌 Cannot connect to API at {API_BASE_URL}")
+        return None
     except Exception as e:
-        st.error(f"Error fetching data: {str(e)}")
+        st.error(f"❌ API Error: {str(e)}")
         return None
 
+def calculate_stats(df, time_range_hours=24):
+    """Calculate comprehensive statistics"""
+    if df.empty:
+        return {}
+    
+    current_price = df.iloc[-1]['price']
+    price_start = df.iloc[0]['price']
+    
+    # Overall stats
+    change_total = ((current_price - price_start) / price_start) * 100
+    high_total = df['price'].max()
+    low_total = df['price'].min()
+    volume_total = df['volume'].sum() if 'volume' in df.columns else 0
+    
+    # 24H stats if we have enough data
+    if len(df) > 288:  # ~24 hours of 5-min intervals
+        df_24h = df.tail(288)
+        price_24h_ago = df_24h.iloc[0]['price']
+        change_24h = ((current_price - price_24h_ago) / price_24h_ago) * 100
+        high_24h = df_24h['price'].max()
+        low_24h = df_24h['price'].min()
+        volume_24h = df_24h['volume'].sum() if 'volume' in df_24h.columns else 0
+    else:
+        change_24h = change_total
+        high_24h = high_total
+        low_24h = low_total
+        volume_24h = volume_total
+    
+    # Volatility
+    volatility = df['price'].pct_change().std() * 100 if len(df) > 1 else 0
+    
+    return {
+        'current_price': current_price,
+        'change_24h': change_24h,
+        'high_24h': high_24h,
+        'low_24h': low_24h,
+        'volume_24h': volume_24h,
+        'change_total': change_total,
+        'high_total': high_total,
+        'low_total': low_total,
+        'volatility': volatility,
+        'avg_price': df['price'].mean(),
+        'total_volume': volume_total,
+        'data_points': len(df)
+    }
 
-# Sidebar
-st.sidebar.header("⚙️ Settings")
-selected_symbol = st.sidebar.selectbox(
-    "Select Cryptocurrency",
-    ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT"]
+# ==================== SESSION STATE ====================
+
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
+    st.session_state.last_refresh = 0
+    st.session_state.refresh_count = 0
+    st.session_state.selected_symbol = "BTCUSDT"
+    st.session_state.selected_time_range = "24H"
+    st.session_state.last_interaction = 0
+
+# ==================== AUTO-REFRESH LOGIC ====================
+
+current_time = time.time()
+user_interaction_timeout = 2
+
+should_auto_refresh = (
+    current_time - st.session_state.last_refresh > REFRESH_INTERVAL and
+    current_time - st.session_state.get('last_interaction', 0) > user_interaction_timeout
 )
-time_range = st.sidebar.slider("Time Range (hours)", 1, 168, 24)
-kline_limit = st.sidebar.slider("Kline Candles", 20, 200, 100)
-auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)", value=False)
 
-# Pipeline status in sidebar
-st.sidebar.divider()
-st.sidebar.header("🔗 Pipeline Status")
-health = fetch_data("/health")
-if health:
-    st.sidebar.success(f"API: {health.get('status', 'unknown')}")
-    pm = health.get("pipeline_metrics", {})
-    st.sidebar.metric("Records Processed", pm.get("records_processed", 0))
-    st.sidebar.metric("Anomalies Detected", pm.get("anomalies_detected", 0))
-    st.sidebar.metric("Errors", pm.get("errors", 0))
-else:
-    st.sidebar.error("API Unreachable")
+if should_auto_refresh:
+    st.session_state.last_refresh = current_time
+    st.session_state.refresh_count += 1
+    st.rerun()
 
+# ==================== HEADER ====================
 
-# ── Main content ─────────────────────────────────────────────────────
+col_title, col_status = st.columns([4, 1])
 
-# Top metrics row
-col1, col2, col3, col4 = st.columns(4)
+with col_title:
+    st.title("🚀 Crypto Analytics Dashboard")
+    st.markdown("**Real-time monitoring with 1-second refresh** | Indonesia WIB Timezone")
 
-# Fetch current price
-prices = fetch_data(f"/prices/{selected_symbol}", {"hours": 1})
-if prices and len(prices) > 0:
-    current_price = prices[0]
-    with col1:
-        st.metric(
-            label=f"💰 {selected_symbol} Price",
-            value=f"${current_price['price']:,.2f}",
-            delta=f"{current_price.get('volume', 0):,.0f} volume"
-        )
-
-# Fetch anomalies
-anomalies = fetch_data("/anomalies", {"hours": time_range})
-if anomalies is not None:
-    with col2:
-        st.metric(
-            label="🚨 Anomalies",
-            value=len(anomalies),
-            delta=f"Last {time_range}h"
-        )
-
-# Fetch sentiment
-reddit_sentiment = fetch_data("/sentiment/reddit", {"hours": time_range})
-if reddit_sentiment:
-    avg_sent = reddit_sentiment.get('avg_sentiment', 0)
-    sentiment_label = "Positive" if avg_sent > 0.05 else "Negative" if avg_sent < -0.05 else "Neutral"
-    with col3:
-        st.metric(
-            label="💬 Reddit Sentiment",
-            value=sentiment_label,
-            delta=f"{avg_sent:.3f}"
-        )
-    with col4:
-        st.metric(
-            label="📝 Total Posts",
-            value=reddit_sentiment.get("total_posts", 0),
-            delta=f"Last {time_range}h"
-        )
+with col_status:
+    health = fetch_api("/health")
+    if health:
+        st.markdown('<div class="status-badge status-live">● LIVE</div>', unsafe_allow_html=True)
+        st.caption(f"🔄 {st.session_state.refresh_count} refreshes")
+    else:
+        st.markdown('<div class="status-badge" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border-color: #ef4444;">● OFFLINE</div>', unsafe_allow_html=True)
 
 st.divider()
 
-# ── Candlestick Chart ────────────────────────────────────────────────
+# ==================== SIDEBAR ====================
 
-st.subheader(f"🕯️ {selected_symbol} Candlestick Chart")
+st.sidebar.header("⚙️ Settings")
 
-kline_data = fetch_data(f"/klines/{selected_symbol}", {"limit": kline_limit})
-if kline_data and len(kline_data) > 0:
-    df_kline = pd.DataFrame(kline_data)
-    df_kline['close_time'] = pd.to_datetime(df_kline['close_time'])
-    if 'open_time' in df_kline.columns:
-        df_kline['open_time'] = pd.to_datetime(df_kline['open_time'])
-    df_kline = df_kline.sort_values('close_time')
+# Symbol selector
+symbol_list = list(SYMBOLS.keys())
+selected_symbol = st.sidebar.selectbox(
+    "💎 Cryptocurrency",
+    symbol_list,
+    index=symbol_list.index(st.session_state.selected_symbol),
+    format_func=lambda x: f"{SYMBOLS[x]['emoji']} {SYMBOLS[x]['name']} ({x})",
+    key="symbol_selector"
+)
 
-    # Determine candle colors
-    colors = ['#26a69a' if row['close'] >= row['open'] else '#ef5350' for _, row in df_kline.iterrows()]
+# Time range selector
+time_range = st.sidebar.select_slider(
+    "📅 Time Range",
+    options=["1H", "6H", "12H", "24H", "7D"],
+    value=st.session_state.selected_time_range,
+    key="time_range_selector"
+)
 
-    fig_candle = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.03,
-        subplot_titles=('OHLC Candlestick', 'Volume'),
-        row_heights=[0.75, 0.25]
+# Update session state
+if selected_symbol != st.session_state.selected_symbol:
+    st.session_state.selected_symbol = selected_symbol
+    st.session_state.last_interaction = time.time()
+
+if time_range != st.session_state.selected_time_range:
+    st.session_state.selected_time_range = time_range
+    st.session_state.last_interaction = time.time()
+
+# Convert time range to hours
+time_range_hours = {
+    "1H": 1, "6H": 6, "12H": 12, "24H": 24, "7D": 168
+}.get(st.session_state.selected_time_range, 24)
+
+st.sidebar.divider()
+
+# Next refresh counter
+time_since_refresh = int(current_time - st.session_state.last_refresh)
+remaining = max(0, REFRESH_INTERVAL - time_since_refresh)
+st.sidebar.metric("⏱️ Next Refresh", f"{remaining}s" if remaining > 0 else "Now!")
+
+# System status
+st.sidebar.subheader("📊 System Status")
+if health:
+    metrics = health.get('pipeline_metrics', {})
+    st.sidebar.success("✅ API Connected")
+    st.sidebar.metric("📈 Records", f"{metrics.get('records_processed', 0):,}")
+    st.sidebar.metric("🚨 Anomalies", metrics.get('anomalies_detected', 0))
+else:
+    st.sidebar.error("❌ API Disconnected")
+
+st.sidebar.divider()
+
+# Current time display
+current_wib = now_wib()
+st.sidebar.info(f"🕐 **WIB Time**\n\n{current_wib.strftime('%Y-%m-%d %H:%M:%S')}")
+
+# ==================== MAIN CONTENT ====================
+
+# Use consistent variables
+current_symbol = st.session_state.selected_symbol
+current_time_range = st.session_state.selected_time_range
+
+symbol_info = SYMBOLS[current_symbol]
+
+# Fetch data
+with st.spinner(f"Loading {symbol_info['name']} data..."):
+    price_data = fetch_api(f"/prices/{current_symbol}", {"hours": time_range_hours})
+
+if not price_data or len(price_data) == 0:
+    st.error("⚠️ No data available")
+    st.info("""
+    **Quick Start:**
+    1. Make sure Docker services are running: `docker compose up -d`
+    2. Start WebSocket ingestion: `python ingestion/binance_websocket.py`
+    3. Wait 2-3 minutes for data
+    4. Refresh this dashboard
+    """)
+    st.stop()
+
+# Process data
+df = pd.DataFrame(price_data)
+
+# Parse timestamps and convert UTC to WIB
+try:
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    # Add 7 hours to convert UTC to WIB
+    df['timestamp'] = df['timestamp'] + pd.Timedelta(hours=7)
+except Exception as e:
+    st.error(f"Timestamp error: {e}")
+
+df = df.sort_values('timestamp')
+
+# Calculate statistics
+stats = calculate_stats(df, time_range_hours)
+
+# ==================== OVERVIEW METRICS ====================
+
+st.subheader(f"{symbol_info['emoji']} {symbol_info['name']} Overview — {current_time_range} — LIVE")
+
+col1, col2, col3, col4, col5 = st.columns(5)
+
+with col1:
+    st.metric(
+        "💰 Current Price",
+        f"${stats['current_price']:,.2f}",
+        f"{stats['change_24h']:+.2f}% (24H)",
+        delta_color="normal"
     )
 
-    # Candlestick trace
-    fig_candle.add_trace(
-        go.Candlestick(
+with col2:
+    st.metric(
+        "📈 24H High",
+        f"${stats['high_24h']:,.2f}",
+        f"Low: ${stats['low_24h']:,.2f}"
+    )
+
+with col3:
+    st.metric(
+        f"📊 {current_time_range} Change",
+        f"{stats['change_total']:+.2f}%",
+        f"High: ${stats['high_total']:,.2f}",
+        delta_color="normal"
+    )
+
+with col4:
+    st.metric(
+        "💹 24H Volume",
+        f"{stats['volume_24h']:,.0f}",
+        "Trading Activity"
+    )
+
+with col5:
+    st.metric(
+        "⚡ Volatility",
+        f"{stats['volatility']:.2f}%",
+        "Price Std Dev"
+    )
+
+st.divider()
+
+# ==================== TABS ====================
+
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Live Chart", "🕯️ Candlestick", "📰 News & Alerts", "📈 Analytics"])
+
+# TAB 1: Live Price Chart
+with tab1:
+    col_chart, col_info = st.columns([3, 1])
+    
+    with col_chart:
+        st.subheader(f"💹 {symbol_info['name']} Price — {current_time_range} — Real-time")
+        
+        # Create figure
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.03,
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f'{current_symbol} Price (USD)', 'Volume')
+        )
+        
+        # Price line
+        fig.add_trace(
+            go.Scatter(
+                x=df['timestamp'],
+                y=df['price'],
+                mode='lines',
+                name='Price',
+                line=dict(color=symbol_info['color'], width=3),
+                fill='tozeroy',
+                fillcolor=f"rgba{tuple(list(int(symbol_info['color'][i:i+2], 16) for i in (1, 3, 5)) + [0.1])}",
+                hovertemplate='<b>$%{y:,.2f}</b><br>%{x}<extra></extra>'
+            ),
+            row=1, col=1
+        )
+        
+        # Moving average
+        if len(df) > 20:
+            df['ma'] = df['price'].rolling(window=20).mean()
+            fig.add_trace(
+                go.Scatter(
+                    x=df['timestamp'],
+                    y=df['ma'],
+                    mode='lines',
+                    name='MA 20',
+                    line=dict(color='#f59e0b', width=2, dash='dash'),
+                    hovertemplate='<b>MA: $%{y:,.2f}</b><extra></extra>'
+                ),
+                row=1, col=1
+            )
+        
+        # Volume bars
+        colors = ['#10b981' if i > 0 and df.iloc[i]['price'] >= df.iloc[i-1]['price'] else '#ef4444' 
+                 for i in range(len(df))]
+        
+        fig.add_trace(
+            go.Bar(
+                x=df['timestamp'],
+                y=df['volume'],
+                name='Volume',
+                marker_color=colors,
+                opacity=0.6,
+                hovertemplate='<b>%{y:,.0f}</b><extra></extra>'
+            ),
+            row=2, col=1
+        )
+        
+        fig.update_layout(
+            height=600,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,15,26,0.8)",
+            hovermode='x unified',
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(59, 130, 246, 0.1)')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(59, 130, 246, 0.1)')
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col_info:
+        st.subheader("📊 Quick Stats")
+        
+        st.markdown(f"""
+        <div class="info-card">
+            <h4 style="color: {symbol_info['color']};">Price Range</h4>
+            <p><b>24H:</b> ${stats['low_24h']:,.2f} - ${stats['high_24h']:,.2f}</p>
+            <p><b>{current_time_range}:</b> ${stats['low_total']:,.2f} - ${stats['high_total']:,.2f}</p>
+        </div>
+        
+        <div class="info-card">
+            <h4>Performance</h4>
+            <p class="{'price-up' if stats['change_24h'] >= 0 else 'price-down'}">
+                <b>24H:</b> {stats['change_24h']:+.2f}%
+            </p>
+            <p class="{'price-up' if stats['change_total'] >= 0 else 'price-down'}">
+                <b>{current_time_range}:</b> {stats['change_total']:+.2f}%
+            </p>
+        </div>
+        
+        <div class="info-card">
+            <h4>Trading</h4>
+            <p><b>Avg Price:</b> ${stats['avg_price']:,.2f}</p>
+            <p><b>Total Vol:</b> {stats['total_volume']:,.0f}</p>
+            <p><b>Volatility:</b> {stats['volatility']:.2f}%</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.caption(f"📅 Last: {df.iloc[-1]['timestamp'].strftime('%H:%M:%S')} WIB")
+        st.caption(f"📊 Points: {stats['data_points']:,}")
+
+# TAB 2: Candlestick
+with tab2:
+    st.subheader("🕯️ Candlestick Chart")
+    
+    kline_data = fetch_api(f"/klines/{current_symbol}", {"limit": 168})
+    
+    if kline_data and len(kline_data) > 0:
+        df_kline = pd.DataFrame(kline_data)
+        
+        # Parse timestamps and convert UTC to WIB
+        try:
+            df_kline['close_time'] = pd.to_datetime(df_kline['close_time'])
+            df_kline['close_time'] = df_kline['close_time'] + pd.Timedelta(hours=7)
+        except Exception as e:
+            st.error(f"Timestamp error: {e}")
+        
+        df_kline = df_kline.sort_values('close_time')
+        
+        fig_candle = go.Figure(data=[go.Candlestick(
             x=df_kline['close_time'],
             open=df_kline['open'],
             high=df_kline['high'],
             low=df_kline['low'],
             close=df_kline['close'],
-            name='OHLC',
-            increasing_line_color='#26a69a',
-            decreasing_line_color='#ef5350',
-        ),
-        row=1, col=1
-    )
+            increasing_line_color='#10b981',
+            decreasing_line_color='#ef4444',
+            increasing_fillcolor='#10b981',
+            decreasing_fillcolor='#ef4444',
+        )])
+        
+        fig_candle.update_layout(
+            height=500,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,15,26,0.8)",
+            xaxis_rangeslider_visible=False,
+            hovermode='x'
+        )
+        
+        st.plotly_chart(fig_candle, use_container_width=True)
+    else:
+        st.info("💡 No candlestick data. Start WebSocket ingestion first.")
 
-    # Volume bars
-    fig_candle.add_trace(
-        go.Bar(
-            x=df_kline['close_time'],
-            y=df_kline['volume'],
-            name='Volume',
-            marker_color=colors,
+# TAB 3: News & Alerts
+with tab3:
+    col_news, col_anomaly = st.columns(2)
+    
+    with col_news:
+        st.subheader("📰 Latest Crypto News")
+        news = fetch_api("/news", {"limit": 10})
+        
+        if news and len(news) > 0:
+            for article in news[:8]:
+                sentiment = article.get('sentiment_label', 'neutral')
+                score = article.get('sentiment_score', 0) or 0
+                url = article.get('url', '#')
+                
+                emoji = '🟢' if sentiment == 'positive' else '🔴' if sentiment == 'negative' else '⚪'
+                color = '#10b981' if sentiment == 'positive' else '#ef4444' if sentiment == 'negative' else '#6b7280'
+                
+                st.markdown(f"""
+                <div class="news-card">
+                    {emoji} <b>{article['title']}</b><br>
+                    <small style="color: {color};">{article['source']} • {sentiment.upper()} ({score:+.2f})</small><br>
+                    <small><a href="{url}" target="_blank" style="color: #3b82f6; text-decoration: none;">🔗 Read article →</a></small>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("💡 No news. Run: `python ingestion/rss_batch.py`")
+    
+    with col_anomaly:
+        st.subheader("🚨 Anomaly Alerts")
+        anomalies = fetch_api("/anomalies", {"hours": 24})
+        
+        if anomalies and len(anomalies) > 0:
+            for anomaly in anomalies[:8]:
+                severity = anomaly.get('severity', 'medium')
+                emoji = '🔴' if severity == 'high' else '🟡' if severity == 'medium' else '🟢'
+                
+                st.markdown(f"""
+                <div class="info-card">
+                    {emoji} <b>{anomaly['event_type'].replace('_', ' ').title()}</b><br>
+                    <small>{anomaly.get('symbol', 'N/A')} • {anomaly['description']}</small>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("✅ No anomalies in last 24 hours")
+
+# TAB 4: Analytics
+with tab4:
+    st.subheader("📈 Advanced Analytics")
+    
+    col_a1, col_a2 = st.columns(2)
+    
+    with col_a1:
+        # Price distribution
+        fig_dist = go.Figure(data=[go.Histogram(
+            x=df['price'],
+            nbinsx=50,
+            marker_color=symbol_info['color'],
             opacity=0.7,
-        ),
-        row=2, col=1
-    )
+            name='Price Distribution'
+        )])
+        
+        fig_dist.update_layout(
+            title="Price Distribution",
+            height=300,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,15,26,0.8)",
+        )
+        
+        st.plotly_chart(fig_dist, use_container_width=True)
+    
+    with col_a2:
+        # Hourly volume
+        df_hourly = df.set_index('timestamp').resample('1h').agg({'volume': 'sum'}).reset_index()
+        
+        fig_vol = go.Figure(data=[go.Bar(
+            x=df_hourly['timestamp'],
+            y=df_hourly['volume'],
+            marker_color='#a78bfa',
+            name='Hourly Volume'
+        )])
+        
+        fig_vol.update_layout(
+            title="Hourly Volume Trend",
+            height=300,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,15,26,0.8)",
+        )
+        
+        st.plotly_chart(fig_vol, use_container_width=True)
 
-    fig_candle.update_layout(
-        height=550,
-        showlegend=False,
-        hovermode='x unified',
-        template='plotly_dark',
-        xaxis_rangeslider_visible=False,
-    )
-    fig_candle.update_xaxes(title_text="Time", row=2, col=1)
-    fig_candle.update_yaxes(title_text="Price (USD)", row=1, col=1)
-    fig_candle.update_yaxes(title_text="Volume", row=2, col=1)
-
-    st.plotly_chart(fig_candle, use_container_width=True)
-else:
-    st.info("No kline data available. Run the Binance ingestion scripts first.")
-
-st.divider()
-
-# ── Price History Line Chart ─────────────────────────────────────────
-
-st.subheader(f"💰 {selected_symbol} Price History")
-
-price_data = fetch_data(f"/prices/{selected_symbol}", {"hours": time_range})
-if price_data and len(price_data) > 0:
-    df_price = pd.DataFrame(price_data)
-    df_price['timestamp'] = pd.to_datetime(df_price['timestamp'])
-    df_price = df_price.sort_values('timestamp')
-
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.03,
-        subplot_titles=('Price', 'Volume'),
-        row_heights=[0.7, 0.3]
-    )
-
-    # Price line
-    fig.add_trace(
-        go.Scatter(
-            x=df_price['timestamp'],
-            y=df_price['price'],
-            mode='lines',
-            name='Price',
-            line=dict(color='#00e676', width=2)
-        ),
-        row=1, col=1
-    )
-
-    # Volume bars
-    fig.add_trace(
-        go.Bar(
-            x=df_price['timestamp'],
-            y=df_price['volume'],
-            name='Volume',
-            marker_color='#42a5f5',
-            opacity=0.6,
-        ),
-        row=2, col=1
-    )
-
-    fig.update_layout(
-        height=500,
-        showlegend=True,
-        hovermode='x unified',
-        template='plotly_dark'
-    )
-
-    fig.update_xaxes(title_text="Time", row=2, col=1)
-    fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
-    fig.update_yaxes(title_text="Volume", row=2, col=1)
-
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("No price data available")
+# ==================== FOOTER ====================
 
 st.divider()
 
-# ── Gold Layer Section ───────────────────────────────────────────────
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 
-st.subheader("🏆 Gold Layer Consolidated Analytics")
-st.markdown("Refined business-level metrics (Gold Layer) merging hourly average price, social sentiment, and anomalies.")
+with col_f1:
+    last_data_time = df.iloc[-1]['timestamp']
+    st.caption(f"📊 Last Data: {last_data_time.strftime('%Y-%m-%d %H:%M:%S')} WIB")
 
-gold_data = fetch_data(f"/gold/metrics/{selected_symbol}", {"hours": time_range})
-if gold_data and len(gold_data) > 0:
-    df_gold = pd.DataFrame(gold_data)
-    df_gold['window_start'] = pd.to_datetime(df_gold['window_start'])
-    df_gold = df_gold.sort_values('window_start')
+with col_f2:
+    st.caption(f"🕐 Dashboard: {current_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
 
-    # Dual-axis chart correlating Price and Sentiment
-    fig_gold = make_subplots(specs=[[{"secondary_y": True}]])
+with col_f3:
+    st.caption(f"🔄 Auto-refresh: {REFRESH_INTERVAL}s")
 
-    # Price Line (Primary Y)
-    fig_gold.add_trace(
-        go.Scatter(
-            x=df_gold['window_start'],
-            y=df_gold['avg_price'],
-            name='Avg Price (USD)',
-            line=dict(color='#ff9800', width=3)
-        ),
-        secondary_y=False
-    )
+with col_f4:
+    st.caption(f"📈 Refreshes: {st.session_state.refresh_count:,}")
 
-    # Sentiment Score (Secondary Y)
-    fig_gold.add_trace(
-        go.Bar(
-            x=df_gold['window_start'],
-            y=df_gold['avg_sentiment'],
-            name='Avg Sentiment',
-            opacity=0.6,
-            marker=dict(
-                color=df_gold['avg_sentiment'],
-                colorscale='RdYlGn',
-                cmin=-0.8,
-                cmax=0.8,
-                showscale=False
-            )
-        ),
-        secondary_y=True
-    )
-
-    fig_gold.update_layout(
-        title=f"Price vs. Social Sentiment Correlation (1-Hour Windows) for {selected_symbol}",
-        hovermode='x unified',
-        template='plotly_dark',
-        height=400,
-        legend=dict(x=0.01, y=0.99)
-    )
-
-    fig_gold.update_xaxes(title_text="Time")
-    fig_gold.update_yaxes(title_text="Price (USD)", secondary_y=False)
-    fig_gold.update_yaxes(title_text="Sentiment Score (-1.0 to +1.0)", secondary_y=True)
-
-    st.plotly_chart(fig_gold, use_container_width=True)
-else:
-    st.info("No Gold Layer aggregated metrics available yet. Compile them using the Gold Layer Processor!")
-
-st.divider()
-
-# ── News & Anomalies columns ────────────────────────────────────────
-
-col_left, col_right = st.columns(2)
-
-with col_left:
-    st.subheader("📰 Recent News with Sentiment")
-    news = fetch_data("/news", {"limit": 10})
-
-    if news:
-        for article in news:
-            sentiment = article.get('sentiment_label', 'neutral')
-            score = article.get('sentiment_score', 0) or 0
-
-            # Color based on sentiment
-            if sentiment == 'positive':
-                color = "🟢"
-            elif sentiment == 'negative':
-                color = "🔴"
-            else:
-                color = "⚪"
-
-            st.markdown(f"{color} **{article['title']}**")
-            st.caption(f"{article['source']} | Sentiment: {sentiment} ({score:.2f})")
-            st.markdown(f"[Read more]({article['url']})")
-            st.divider()
-    else:
-        st.info("No news articles available")
-
-with col_right:
-    st.subheader("🚨 Recent Anomalies")
-
-    if anomalies and len(anomalies) > 0:
-        for anomaly in anomalies[:10]:
-            severity = anomaly.get('severity', 'medium')
-
-            # Color based on severity
-            if severity == 'high':
-                icon = "🔴"
-            elif severity == 'medium':
-                icon = "🟡"
-            else:
-                icon = "🟢"
-
-            st.markdown(f"{icon} **{anomaly['event_type'].upper()}**")
-            st.caption(f"{anomaly.get('symbol', 'N/A')} | {anomaly['detected_at']}")
-            st.text(anomaly['description'])
-            st.divider()
-    else:
-        st.success("No anomalies detected")
-
-# ── Reddit Sentiment Breakdown ───────────────────────────────────────
-
-st.divider()
-st.subheader("💬 Reddit Sentiment Analysis")
-
-if reddit_sentiment:
-    col_a, col_b, col_c, col_d = st.columns(4)
-
-    with col_a:
-        st.metric("Total Posts", reddit_sentiment['total_posts'])
-    with col_b:
-        st.metric("Positive", reddit_sentiment['positive'], delta="🟢")
-    with col_c:
-        st.metric("Neutral", reddit_sentiment['neutral'], delta="⚪")
-    with col_d:
-        st.metric("Negative", reddit_sentiment['negative'], delta="🔴")
-
-    # Sentiment pie chart
-    fig_sentiment = go.Figure(data=[go.Pie(
-        labels=['Positive', 'Neutral', 'Negative'],
-        values=[
-            reddit_sentiment['positive'],
-            reddit_sentiment['neutral'],
-            reddit_sentiment['negative']
-        ],
-        marker_colors=['#00e676', '#808080', '#ef5350'],
-        hole=0.4,
-    )])
-
-    fig_sentiment.update_layout(
-        title="Sentiment Distribution",
-        template='plotly_dark',
-        height=300
-    )
-
-    st.plotly_chart(fig_sentiment, use_container_width=True)
-
-# ── Auto Refresh ─────────────────────────────────────────────────────
-
-if auto_refresh:
-    import time
-    time.sleep(30)
-    st.rerun()
-
-# Footer
-st.divider()
-st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Powered by Medallion Architecture (Bronze → Silver → Gold)")
+# Add subtle watermark
+st.markdown("""
+<div style="text-align: center; opacity: 0.5; margin-top: 20px; font-size: 0.8rem;">
+    🚀 Perfect Real-time Crypto Analytics Dashboard | Powered by Streamlit
+</div>
+""", unsafe_allow_html=True)

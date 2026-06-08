@@ -20,7 +20,7 @@ import joblib
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from monitoring.logger import get_logger, metrics
-from storage.db_models import get_session, PriceData, NewsArticle, RedditPost
+from storage.db_models import get_session, PriceData, NewsArticle
 from storage.db_utils import save_anomaly_event
 from dotenv import load_dotenv
 
@@ -173,41 +173,6 @@ class BatchSentimentInference:
         finally:
             session.close()
 
-    def score_unscored_reddit(self, limit: int = 500) -> dict:
-        """Score Reddit posts that don't have sentiment yet."""
-        session = get_session()
-        try:
-            from ml.models.sentiment_vader import analyze_sentiment_vader
-
-            unscored = session.query(RedditPost).filter(
-                RedditPost.sentiment_score == None  # noqa: E711
-            ).limit(limit).all()
-
-            scored = 0
-            for post in unscored:
-                text = f"{post.title or ''} {post.content or ''}"
-                if not text.strip():
-                    continue
-
-                result = analyze_sentiment_vader(text)
-                post.sentiment_score = result["compound"]
-                post.sentiment_label = result["label"]
-                scored += 1
-
-            session.commit()
-            metrics.increment("records_processed", scored)
-
-            summary = {"type": "reddit", "total_unscored": len(unscored), "scored": scored}
-            logger.info("batch_sentiment_reddit_completed", **summary)
-            return summary
-
-        except Exception as e:
-            session.rollback()
-            logger.error("batch_sentiment_reddit_failed", error=str(e))
-            return {"type": "reddit", "error": str(e)}
-        finally:
-            session.close()
-
 
 def run_batch_inference():
     """Run all batch inference tasks."""
@@ -222,7 +187,6 @@ def run_batch_inference():
     # Sentiment scoring
     sentiment_engine = BatchSentimentInference()
     results["sentiment_news"] = sentiment_engine.score_unscored_news()
-    results["sentiment_reddit"] = sentiment_engine.score_unscored_reddit()
 
     logger.info("batch_inference_pipeline_completed", results=results)
     return results

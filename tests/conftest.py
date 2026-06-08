@@ -121,24 +121,6 @@ def sample_news_data():
 
 
 @pytest.fixture
-def sample_reddit_data():
-    """Sample Reddit post dict for testing."""
-    import time
-    return {
-        "post_id": "abc123",
-        "subreddit": "cryptocurrency",
-        "title": "BTC to the moon!",
-        "content": "I think Bitcoin is going up today.",
-        "author": "crypto_fan",
-        "score": 42,
-        "num_comments": 10,
-        "created_at": time.time(),
-        "sentiment_score": 0.6,
-        "sentiment_label": "positive",
-    }
-
-
-@pytest.fixture
 def sample_anomaly_data():
     """Sample anomaly event dict for testing."""
     return {
@@ -149,3 +131,14 @@ def sample_anomaly_data():
         "value": 0.05,
         "threshold": 0.03,
     }
+
+
+@pytest.fixture(autouse=True)
+def mock_telegram(monkeypatch):
+    """Mock all Telegram alert functions so tests never send real alerts."""
+    import monitoring.telegram_alert as tg
+
+    monkeypatch.setattr(tg, "send_anomaly_alert", lambda *a, **kw: None)
+    monkeypatch.setattr(tg, "send_price_spike_alert", lambda *a, **kw: None)
+    monkeypatch.setattr(tg, "send_startup_notification", lambda *a, **kw: None)
+    monkeypatch.setattr(tg, "send_pipeline_error_alert", lambda *a, **kw: None)

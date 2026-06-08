@@ -26,7 +26,13 @@ load_dotenv()
 logger = get_logger(__name__)
 
 # Public Binance API — no key required
-BASE_URL = "https://api.binance.com"
+# Try alternative endpoints if main API blocked
+BASE_URLS = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+]
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT"]
 POLL_INTERVAL = 30  # seconds between polling cycles
 
@@ -36,7 +42,9 @@ class BinanceRestClient:
 
     def __init__(self, symbols: List[str] = None):
         self.symbols = symbols or SYMBOLS
-        self.base_url = BASE_URL
+        self.base_urls = BASE_URLS
+        self.current_url_index = 0
+        self.base_url = self.base_urls[0]
 
         # Session with automatic retry on transient errors
         self.session = Session()
@@ -47,7 +55,13 @@ class BinanceRestClient:
         )
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
 
-        logger.info("binance_rest_client_initialized", symbols=self.symbols)
+        logger.info("binance_rest_client_initialized", symbols=self.symbols, base_url=self.base_url)
+
+    def _try_next_url(self):
+        """Switch to next available Binance API endpoint"""
+        self.current_url_index = (self.current_url_index + 1) % len(self.base_urls)
+        self.base_url = self.base_urls[self.current_url_index]
+        logger.warning("switching_api_endpoint", new_url=self.base_url)
 
     # ──────────────────────────────────────────────────────────────────
     # Ticker (24h stats)
@@ -55,42 +69,55 @@ class BinanceRestClient:
 
     def fetch_ticker_24hr(self, symbol: str) -> Optional[Dict]:
         """Fetch 24-hour ticker statistics for a symbol."""
-        try:
-            resp = self.session.get(
-                f"{self.base_url}/api/v3/ticker/24hr",
-                params={"symbol": symbol},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-            # Save raw response to Bronze (MinIO)
+        # Try all available endpoints
+        for attempt in range(len(self.base_urls)):
             try:
-                from storage.minio_utils import save_to_bronze
-                save_to_bronze(
-                    "binance_rest_ticker",
-                    data,
-                    identifier=f"{symbol}_{data.get('closeTime', '')}",
+                resp = self.session.get(
+                    f"{self.base_url}/api/v3/ticker/24hr",
+                    params={"symbol": symbol},
+                    timeout=15,  # Increased timeout
                 )
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Save raw response to Bronze (MinIO)
+                try:
+                    from storage.minio_utils import save_to_bronze
+                    save_to_bronze(
+                        "binance_rest_ticker",
+                        data,
+                        identifier=f"{symbol}_{data.get('closeTime', '')}",
+                    )
+                except Exception as e:
+                    logger.debug("bronze_ticker_save_skipped", error=str(e))
+
+                metrics.increment("api_calls")
+
+                return {
+                    "symbol": data["symbol"],
+                    "price": float(data["lastPrice"]),
+                    "volume": float(data["volume"]),
+                    "high_24h": float(data["highPrice"]),
+                    "low_24h": float(data["lowPrice"]),
+                    "change_24h": float(data["priceChangePercent"]),
+                    "timestamp": datetime.utcnow(),
+                }
+
             except Exception as e:
-                logger.debug("bronze_ticker_save_skipped", error=str(e))
-
-            metrics.increment("api_calls")
-
-            return {
-                "symbol": data["symbol"],
-                "price": float(data["lastPrice"]),
-                "volume": float(data["volume"]),
-                "high_24h": float(data["highPrice"]),
-                "low_24h": float(data["lowPrice"]),
-                "change_24h": float(data["priceChangePercent"]),
-                "timestamp": datetime.utcnow(),
-            }
-
-        except Exception as e:
-            logger.error("fetch_ticker_failed", symbol=symbol, error=str(e))
-            metrics.increment("errors")
-            return None
+                logger.warning("fetch_ticker_attempt_failed", 
+                             symbol=symbol, 
+                             base_url=self.base_url,
+                             error=str(e))
+                
+                # Try next endpoint
+                if attempt < len(self.base_urls) - 1:
+                    self._try_next_url()
+                    time.sleep(1)
+                else:
+                    logger.error("fetch_ticker_failed_all_endpoints", symbol=symbol, error=str(e))
+                    metrics.increment("errors")
+                    
+        return None
 
     # ──────────────────────────────────────────────────────────────────
     # Kline / Candlestick
@@ -100,48 +127,61 @@ class BinanceRestClient:
         self, symbol: str, interval: str = "1m", limit: int = 10
     ) -> List[Dict]:
         """Fetch candlestick/kline data for a symbol."""
-        try:
-            resp = self.session.get(
-                f"{self.base_url}/api/v3/klines",
-                params={"symbol": symbol, "interval": interval, "limit": limit},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-            # Save raw response to Bronze (MinIO)
+        # Try all available endpoints
+        for attempt in range(len(self.base_urls)):
             try:
-                from storage.minio_utils import save_to_bronze
-                save_to_bronze(
-                    "binance_rest_klines",
-                    data,
-                    identifier=f"{symbol}_{interval}_limit{limit}",
+                resp = self.session.get(
+                    f"{self.base_url}/api/v3/klines",
+                    params={"symbol": symbol, "interval": interval, "limit": limit},
+                    timeout=15,  # Increased timeout
                 )
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Save raw response to Bronze (MinIO)
+                try:
+                    from storage.minio_utils import save_to_bronze
+                    save_to_bronze(
+                        "binance_rest_klines",
+                        data,
+                        identifier=f"{symbol}_{interval}_limit{limit}",
+                    )
+                except Exception as e:
+                    logger.debug("bronze_klines_save_skipped", error=str(e))
+
+                metrics.increment("api_calls")
+
+                klines = []
+                for k in data:
+                    klines.append({
+                        "symbol": symbol,
+                        "open": float(k[1]),
+                        "high": float(k[2]),
+                        "low": float(k[3]),
+                        "close": float(k[4]),
+                        "volume": float(k[5]),
+                        "open_time": int(k[0]),
+                        "close_time": int(k[6]),
+                        "interval": interval,
+                    })
+
+                return klines
+
             except Exception as e:
-                logger.debug("bronze_klines_save_skipped", error=str(e))
-
-            metrics.increment("api_calls")
-
-            klines = []
-            for k in data:
-                klines.append({
-                    "symbol": symbol,
-                    "open": float(k[1]),
-                    "high": float(k[2]),
-                    "low": float(k[3]),
-                    "close": float(k[4]),
-                    "volume": float(k[5]),
-                    "open_time": int(k[0]),
-                    "close_time": int(k[6]),
-                    "interval": interval,
-                })
-
-            return klines
-
-        except Exception as e:
-            logger.error("fetch_klines_failed", symbol=symbol, error=str(e))
-            metrics.increment("errors")
-            return []
+                logger.warning("fetch_klines_attempt_failed",
+                             symbol=symbol,
+                             base_url=self.base_url, 
+                             error=str(e))
+                
+                # Try next endpoint
+                if attempt < len(self.base_urls) - 1:
+                    self._try_next_url()
+                    time.sleep(1)
+                else:
+                    logger.error("fetch_klines_failed_all_endpoints", symbol=symbol, error=str(e))
+                    metrics.increment("errors")
+                    
+        return []
 
     # ──────────────────────────────────────────────────────────────────
     # Polling
@@ -183,6 +223,13 @@ def run_continuous_polling():
     """Run continuous polling loop with error recovery."""
     client = BinanceRestClient()
     logger.info("continuous_polling_started", interval=POLL_INTERVAL)
+
+    print(f"\n{'='*60}")
+    print(f"  Binance REST Poller")
+    print(f"  Symbols: {', '.join(client.symbols)}")
+    print(f"  Poll interval: {POLL_INTERVAL}s")
+    print(f"  API Base: {client.base_url}")
+    print(f"{'='*60}\n")
 
     consecutive_errors = 0
 

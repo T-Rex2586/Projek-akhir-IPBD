@@ -14,7 +14,7 @@ Every function follows the safe session pattern:
 """
 from storage.db_models import (
     get_session, PriceData, KlineData, NewsArticle,
-    RedditPost, AnomalyEvent, GoldHourlyMetrics,
+    AnomalyEvent, GoldHourlyMetrics,
 )
 from monitoring.logger import get_logger
 from datetime import datetime, timedelta
@@ -61,8 +61,8 @@ def save_kline_data(data: Dict) -> bool:
             low_price=data['low'],
             close_price=data['close'],
             volume=data['volume'],
-            open_time=datetime.fromtimestamp(data['open_time'] / 1000),
-            close_time=datetime.fromtimestamp(data['close_time'] / 1000),
+            open_time=datetime.utcfromtimestamp(data['open_time'] / 1000),  # Store as UTC
+            close_time=datetime.utcfromtimestamp(data['close_time'] / 1000),  # Store as UTC
             interval=data.get('interval', '1m')
         )
         session.add(kline)
@@ -108,41 +108,8 @@ def save_news_article(data: Dict) -> bool:
         session.close()
 
 
-def save_reddit_post(data: Dict) -> bool:
-    """Save Reddit post to database."""
-    session = get_session()
-    try:
-        # Check if post already exists
-        existing = session.query(RedditPost).filter_by(post_id=data['post_id']).first()
-        if existing:
-            return False
-
-        post = RedditPost(
-            post_id=data['post_id'],
-            subreddit=data['subreddit'],
-            title=data.get('title'),
-            content=data.get('content'),
-            author=data.get('author'),
-            score=data.get('score'),
-            num_comments=data.get('num_comments'),
-            created_at=datetime.fromtimestamp(data['created_at']),
-            sentiment_score=data.get('sentiment_score'),
-            sentiment_label=data.get('sentiment_label')
-        )
-        session.add(post)
-        session.commit()
-        logger.info("reddit_post_saved", subreddit=data['subreddit'])
-        return True
-    except Exception as e:
-        session.rollback()
-        logger.error("reddit_post_save_failed", error=str(e))
-        return False
-    finally:
-        session.close()
-
-
-def save_anomaly_event(data: Dict) -> bool:
-    """Save anomaly detection event and send Telegram alert."""
+def save_anomaly_event(data: Dict, send_alert: bool = True) -> bool:
+    """Save anomaly detection event and optionally send Telegram alert."""
     session = get_session()
     try:
         anomaly = AnomalyEvent(
@@ -158,11 +125,12 @@ def save_anomaly_event(data: Dict) -> bool:
         logger.warning("anomaly_detected", event_type=data['event_type'], symbol=data.get('symbol'))
 
         # Send Telegram alert (non-blocking)
-        try:
-            from monitoring.telegram_alert import send_anomaly_alert
-            send_anomaly_alert(data)
-        except Exception as alert_err:
-            logger.warning("telegram_alert_dispatch_failed", error=str(alert_err))
+        if send_alert:
+            try:
+                from monitoring.telegram_alert import send_anomaly_alert
+                send_anomaly_alert(data)
+            except Exception as alert_err:
+                logger.warning("telegram_alert_dispatch_failed", error=str(alert_err))
 
         return True
     except Exception as e:
@@ -231,14 +199,19 @@ def get_recent_prices(symbol: str, hours: int = 24) -> List[Dict]:
         prices = session.query(PriceData).filter(
             PriceData.symbol == symbol,
             PriceData.timestamp >= since
-        ).order_by(PriceData.timestamp.desc()).all()
+        ).order_by(PriceData.timestamp.asc()).all()  # ASCENDING for chronological order
 
-        return [{
+        result = [{
             'symbol': p.symbol,
             'price': p.price,
             'volume': p.volume,
             'timestamp': p.timestamp
         } for p in prices]
+        
+        logger.info("get_recent_prices", symbol=symbol, count=len(result), 
+                   latest=result[-1]['timestamp'] if result else None)
+        
+        return result
     except Exception as e:
         logger.error("get_recent_prices_failed", error=str(e))
         return []
@@ -309,7 +282,7 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
             else:
                 return False
 
-        # 2. Reddit sentiment metrics
+        # 2. News sentiment metrics
         # Map crypto symbols to subreddits or keywords
         kw_map = {
             "BTCUSDT": ["bitcoin", "btc"],
@@ -320,16 +293,6 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
         }
         kws = kw_map.get(symbol.upper(), [symbol.lower()])
 
-        reddit_sentiment = session.query(
-            func.avg(RedditPost.sentiment_score).label('avg'),
-            func.count(RedditPost.id).label('count')
-        ).filter(
-            RedditPost.created_at >= window_start,
-            RedditPost.created_at < window_end,
-            or_(*[RedditPost.title.ilike(f'%{kw}%') for kw in kws])
-        ).first()
-
-        # 3. News sentiment metrics
         news_sentiment = session.query(
             func.avg(NewsArticle.sentiment_score).label('avg'),
             func.count(NewsArticle.id).label('count')
@@ -340,14 +303,10 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
         ).first()
 
         # Combine sentiment
-        total_signals = (reddit_sentiment.count or 0) + (news_sentiment.count or 0)
-        avg_sentiment = 0.0
-        if total_signals > 0:
-            reddit_sum = (reddit_sentiment.avg or 0.0) * (reddit_sentiment.count or 0)
-            news_sum = (news_sentiment.avg or 0.0) * (news_sentiment.count or 0)
-            avg_sentiment = (reddit_sum + news_sum) / total_signals
+        total_signals = news_sentiment.count or 0
+        avg_sentiment = news_sentiment.avg or 0.0
 
-        # 4. Anomalies
+        # 3. Anomalies
         anomalies_count = session.query(func.count(AnomalyEvent.id)).filter(
             AnomalyEvent.symbol == symbol,
             AnomalyEvent.detected_at >= window_start,

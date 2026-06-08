@@ -90,6 +90,16 @@ class BinanceWebSocketClient:
 
                             # Save to Silver (PostgreSQL)
                             if save_kline_data(kline_data):
+                                # Also save to PriceData for dashboard compatibility
+                                from storage.db_utils import save_price_data
+                                price_data = {
+                                    'symbol': kline_data['symbol'],
+                                    'price': kline_data['close'],
+                                    'volume': kline_data['volume'],
+                                    'timestamp': datetime.fromtimestamp(kline_data['close_time'] / 1000)
+                                }
+                                save_price_data(price_data)
+                                
                                 metrics.increment("records_processed")
                                 logger.info(
                                     "kline_received",
@@ -153,7 +163,7 @@ class BinanceWebSocketClient:
                     "threshold": PRICE_CHANGE_THRESHOLD,
                 }
 
-                save_anomaly_event(anomaly)
+                save_anomaly_event(anomaly, send_alert=False)
                 metrics.increment("anomalies_detected")
                 logger.warning(
                     "price_anomaly_detected",
@@ -184,6 +194,14 @@ async def run_websocket_streams():
 
     client = BinanceWebSocketClient()
     logger.info("websocket_streams_started", symbols=client.symbols)
+
+    print(f"\n{'='*60}")
+    print(f"  Binance WebSocket Streams")
+    print(f"  Symbols: {', '.join(client.symbols)}")
+    print(f"  WS URL: {WS_BASE_URL}")
+    print(f"  Reconnect delay: {INITIAL_RECONNECT_DELAY}s (max {MAX_RECONNECT_DELAY}s)")
+    print(f"{'='*60}\n")
+
     send_startup_notification()
 
     try:

@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from monitoring.logger import get_logger, metrics
 from storage.db_models import (
     get_session, PriceData, KlineData, NewsArticle,
-    RedditPost, AnomalyEvent, PipelineMetadata,
+    AnomalyEvent, PipelineMetadata,
 )
 from storage.db_utils import save_pipeline_metadata, update_pipeline_metadata
 from dotenv import load_dotenv
@@ -86,20 +86,6 @@ class BatchProcessor:
                 ),
             }
 
-            # 3. Reddit posts: check for missing sentiment
-            total_reddit = session.query(RedditPost).count()
-            unscored_reddit = session.query(RedditPost).filter(
-                RedditPost.sentiment_score == None  # noqa: E711
-            ).count()
-
-            report["reddit_posts"] = {
-                "total_records": total_reddit,
-                "unscored_posts": unscored_reddit,
-                "quality_score": round(
-                    1 - unscored_reddit / max(total_reddit, 1), 4
-                ),
-            }
-
             # Overall quality
             scores = [v["quality_score"] for v in report.values()]
             report["overall_quality_score"] = round(
@@ -155,44 +141,6 @@ class BatchProcessor:
         finally:
             session.close()
 
-    def rescore_unscored_reddit(self) -> int:
-        """
-        Find Reddit posts without sentiment scores and score them.
-
-        Returns the count of newly scored posts.
-        """
-        logger.info("rescore_reddit_started")
-        session = get_session()
-        scored_count = 0
-
-        try:
-            from ml.models.sentiment_vader import analyze_sentiment_vader
-
-            unscored = session.query(RedditPost).filter(
-                RedditPost.sentiment_score == None  # noqa: E711
-            ).limit(500).all()
-
-            for post in unscored:
-                text = f"{post.title or ''} {post.content or ''}"
-                if not text.strip():
-                    continue
-
-                sentiment = analyze_sentiment_vader(text)
-                post.sentiment_score = sentiment["compound"]
-                post.sentiment_label = sentiment["label"]
-                scored_count += 1
-
-            session.commit()
-            logger.info("rescore_reddit_completed", scored=scored_count)
-            return scored_count
-
-        except Exception as e:
-            session.rollback()
-            logger.error("rescore_reddit_failed", error=str(e))
-            return 0
-        finally:
-            session.close()
-
     # ── Daily Aggregation ────────────────────────────────────────────
 
     def compute_daily_statistics(self, target_date: datetime = None) -> Dict:
@@ -244,15 +192,6 @@ class BatchProcessor:
                 NewsArticle.published_at < day_end,
             ).first()
 
-            # Reddit summary
-            reddit_stats = session.query(
-                func.count(RedditPost.id).label("count"),
-                func.avg(RedditPost.sentiment_score).label("avg_sentiment"),
-            ).filter(
-                RedditPost.created_at >= day_start,
-                RedditPost.created_at < day_end,
-            ).first()
-
             # Anomalies
             anomaly_count = session.query(func.count(AnomalyEvent.id)).filter(
                 AnomalyEvent.detected_at >= day_start,
@@ -268,8 +207,6 @@ class BatchProcessor:
                 "max_price": round(price_stats.max or 0, 2),
                 "news_articles": news_stats.count or 0,
                 "news_avg_sentiment": round(news_stats.avg_sentiment or 0, 4),
-                "reddit_posts": reddit_stats.count or 0,
-                "reddit_avg_sentiment": round(reddit_stats.avg_sentiment or 0, 4),
                 "anomalies_detected": anomaly_count,
             }
 
@@ -280,10 +217,9 @@ class BatchProcessor:
                 from monitoring.telegram_alert import send_daily_summary
                 send_daily_summary(
                     total_prices=summary["price_records"],
-                    total_reddit=summary["reddit_posts"],
                     total_news=summary["news_articles"],
                     total_anomalies=summary["anomalies_detected"],
-                    avg_sentiment=(summary["news_avg_sentiment"] + summary["reddit_avg_sentiment"]) / 2,
+                    avg_sentiment=summary["news_avg_sentiment"],
                 )
             except Exception as tg_err:
                 logger.warning("telegram_daily_summary_failed", error=str(tg_err))
@@ -331,11 +267,9 @@ class BatchProcessor:
         # Step 2: Re-score sentiments
         try:
             articles_scored = self.rescore_unscored_articles()
-            reddit_scored = self.rescore_unscored_reddit()
-            total_processed += articles_scored + reddit_scored
+            total_processed += articles_scored
             results["rescored"] = {
                 "articles": articles_scored,
-                "reddit_posts": reddit_scored,
             }
         except Exception as e:
             total_errors += 1

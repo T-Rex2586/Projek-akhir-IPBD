@@ -71,9 +71,16 @@ class StreamProcessor:
         try:
             from ml.inference.stream_inference import StreamAnomalyInference
             self._model = StreamAnomalyInference()
-            logger.info("ml_model_loaded_for_streaming")
+            if self._model._model is None:
+                logger.info("ml_model_not_trained_yet", 
+                          message="Train model with: python ml/training/train_anomaly_model.py")
+                self._model = None
+            else:
+                logger.info("ml_model_loaded_for_streaming")
         except Exception as e:
-            logger.warning("ml_model_not_available", error=str(e))
+            logger.info("ml_model_not_available", 
+                       message="Anomaly detection will use rule-based only",
+                       hint="Train model with: python ml/training/train_anomaly_model.py")
             self._model = None
 
     def _get_window(self, symbol: str) -> deque:
@@ -129,7 +136,7 @@ class StreamProcessor:
                 "value": price_change,
                 "threshold": PRICE_CHANGE_THRESHOLD,
             }
-            save_anomaly_event(anomaly)
+            save_anomaly_event(anomaly, send_alert=False)
             metrics.increment("anomalies_detected")
             logger.warning("stream_price_anomaly_detected",
                            symbol=symbol, change_pct=price_change * 100)
@@ -156,8 +163,15 @@ class StreamProcessor:
                     "value": volume / avg_vol,
                     "threshold": VOLUME_SPIKE_MULTIPLIER,
                 }
-                save_anomaly_event(anomaly)
+                save_anomaly_event(anomaly, send_alert=False)
                 metrics.increment("anomalies_detected")
+
+                # Telegram alert
+                try:
+                    from monitoring.telegram_alert import send_volume_alert
+                    send_volume_alert(symbol, volume, avg_vol, volume / avg_vol)
+                except Exception:
+                    pass
 
     def check_ml_anomaly(self, price_data: dict):
         """Run ML-based anomaly detection if model is available."""
@@ -202,13 +216,13 @@ class StreamProcessor:
     def process_sentiment_message(self, message: dict):
         """Process a single sentiment message from Kafka."""
         compound = message.get("sentiment_score", 0)
-        subreddit = message.get("subreddit", "unknown")
+        source = message.get("source", "unknown")
 
         if compound < -0.6:
             anomaly = {
                 "event_type": "stream_sentiment_crash",
                 "description": (
-                    f"Negative sentiment spike in r/{subreddit}: "
+                    f"Negative sentiment spike from {source}: "
                     f"score={compound:.3f}, "
                     f"title={message.get('title', '')[:100]}"
                 ),
@@ -216,8 +230,15 @@ class StreamProcessor:
                 "value": compound,
                 "threshold": -0.6,
             }
-            save_anomaly_event(anomaly)
+            save_anomaly_event(anomaly, send_alert=False)
             metrics.increment("anomalies_detected")
+
+            # Telegram alert
+            try:
+                from monitoring.telegram_alert import send_news_sentiment_alert
+                send_news_sentiment_alert(source, compound, message.get('title', ''))
+            except Exception:
+                pass
 
         metrics.increment("records_processed")
 

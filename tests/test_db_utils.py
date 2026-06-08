@@ -13,12 +13,11 @@ from storage.db_utils import (
     save_price_data,
     save_kline_data,
     save_news_article,
-    save_reddit_post,
     save_anomaly_event,
     get_recent_prices,
     get_recent_anomalies,
 )
-from storage.db_models import get_session, PriceData, NewsArticle, RedditPost
+from storage.db_models import get_session, PriceData, NewsArticle
 
 
 class TestSavePriceData:
@@ -88,31 +87,6 @@ class TestSaveNewsArticle:
         article = session.query(NewsArticle).first()
         assert article.sentiment_score == 0.85
         assert article.sentiment_label == "positive"
-        session.close()
-
-
-class TestSaveRedditPost:
-    """Tests for save_reddit_post."""
-
-    def test_save_reddit_success(self, sample_reddit_data):
-        """Should save Reddit post and return True."""
-        result = save_reddit_post(sample_reddit_data)
-        assert result is True
-
-    def test_duplicate_post_id_rejected(self, sample_reddit_data):
-        """Posts with duplicate post_id should be rejected."""
-        save_reddit_post(sample_reddit_data)
-        result = save_reddit_post(sample_reddit_data)
-        assert result is False
-
-    def test_reddit_metadata_stored(self, sample_reddit_data):
-        """Post metadata should be stored correctly."""
-        save_reddit_post(sample_reddit_data)
-        session = get_session()
-        post = session.query(RedditPost).first()
-        assert post.subreddit == "cryptocurrency"
-        assert post.author == "crypto_fan"
-        assert post.score == 42
         session.close()
 
 

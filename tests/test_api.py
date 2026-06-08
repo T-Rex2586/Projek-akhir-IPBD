@@ -144,28 +144,6 @@ class TestNewsEndpoint:
         assert data[0]["title"] == "Bitcoin hits new all-time high"
 
 
-class TestSentimentEndpoint:
-    """Tests for the /sentiment/reddit endpoint."""
-
-    def test_sentiment_empty(self, client, auth_headers):
-        """Should return zero counts if no data."""
-        response = client.get("/sentiment/reddit", headers=auth_headers)
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total_posts"] == 0
-        assert data["avg_sentiment"] == 0.0
-
-    def test_sentiment_subreddit_filter(self, client, auth_headers):
-        """Subreddit filter should work."""
-        response = client.get(
-            "/sentiment/reddit",
-            headers=auth_headers,
-            params={"subreddit": "bitcoin"}
-        )
-        assert response.status_code == 200
-        assert response.json()["subreddit"] == "bitcoin"
-
-
 class TestKlinesEndpoint:
     """Tests for the /klines/{symbol} endpoint."""
 

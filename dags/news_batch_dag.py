@@ -41,7 +41,7 @@ def process_sentiment():
 def generate_daily_summary():
     """Generate daily summary report and send Telegram digest."""
     logger.info("dag_task_started", task="generate_daily_summary")
-    from storage.db_models import get_session, NewsArticle, RedditPost, PriceData, AnomalyEvent
+    from storage.db_models import get_session, NewsArticle, PriceData, AnomalyEvent
     from datetime import datetime, timedelta
     
     session = get_session()
@@ -49,10 +49,6 @@ def generate_daily_summary():
     
     articles = session.query(NewsArticle).filter(
         NewsArticle.published_at >= yesterday
-    ).all()
-    
-    reddit_posts = session.query(RedditPost).filter(
-        RedditPost.created_at >= yesterday
     ).all()
     
     price_count = session.query(PriceData).filter(
@@ -84,7 +80,6 @@ def generate_daily_summary():
         from monitoring.telegram_alert import send_daily_summary
         send_daily_summary(
             total_prices=price_count,
-            total_reddit=len(reddit_posts),
             total_news=len(articles),
             total_anomalies=anomaly_count,
             avg_sentiment=avg_sentiment,

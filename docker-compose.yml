@@ -43,6 +43,12 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - crypto-net
 
@@ -56,7 +62,7 @@ services:
     restart: unless-stopped
     depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
     ports:
@@ -118,111 +124,7 @@ services:
     networks:
       - crypto-net
 
-  # =========================================================
-  # AIRFLOW INIT
-  # =========================================================
-  airflow-init:
-    image: apache/airflow:2.9.1
-    container_name: airflow-init
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW_UID: 50000
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
-    entrypoint: /bin/bash
-    command: >
-      -c "
-      airflow db migrate &&
-      airflow users create
-      --username admin
-      --password admin
-      --firstname Admin
-      --lastname User
-      --role Admin
-      --email admin@example.com
-      "
-    networks:
-      - crypto-net
 
-  # =========================================================
-  # AIRFLOW WEBSERVER
-  # =========================================================
-  airflow-webserver:
-    image: apache/airflow:2.9.1
-    container_name: airflow-webserver
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    ports:
-      - "8080:8080"
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-      AIRFLOW_UID: 50000
-    command: webserver
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
-    networks:
-      - crypto-net
-
-  # =========================================================
-  # AIRFLOW SCHEDULER
-  # =========================================================
-  airflow-scheduler:
-    image: apache/airflow:2.9.1
-    container_name: airflow-scheduler
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW_UID: 50000
-    command: scheduler
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
-    networks:
-      - crypto-net
-
-  # =========================================================
-  # STREAMLIT DASHBOARD
-  # =========================================================
-  streamlit:
-    build:
-      context: ./dashboard
-      dockerfile: dockerfile
-    container_name: streamlit
-    hostname: streamlit
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./dashboard:/app
-    networks:
-      - crypto-net
 
   # =========================================================
   # MINIO (Bronze Layer - Object Storage)
@@ -241,6 +143,12 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks:
       - crypto-net
 
@@ -256,6 +164,12 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks:
       - crypto-net
 

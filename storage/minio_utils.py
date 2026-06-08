@@ -4,13 +4,16 @@ MinIO utilities for Bronze Layer (Raw Data Lake) storage.
 Handles connection to MinIO and raw data persistence.
 Organizes data under a partition-friendly layout:
 bronze/{source}/year={YYYY}/month={MM}/day={DD}/{timestamp}_{unique_id}.json
+
+Includes connection retry logic for resilience during container startup.
 """
 import os
 import json
 import uuid
+import time
 from datetime import datetime
 from io import BytesIO
-from typing import Any, Dict, Union
+from typing import Any, Dict, List, Union
 from minio import Minio
 from dotenv import load_dotenv
 from monitoring.logger import get_logger
@@ -28,26 +31,36 @@ BRONZE_BUCKET = os.getenv("MINIO_BRONZE_BUCKET", "bronze-crypto")
 _client = None
 
 
-def get_minio_client() -> Minio:
-    """Lazy initialize and return the MinIO client."""
+def get_minio_client(max_retries: int = 3, retry_delay: float = 2.0) -> Minio:
+    """Lazy initialize and return the MinIO client with retry logic."""
     global _client
     if _client is None:
-        try:
-            _client = Minio(
-                MINIO_ENDPOINT,
-                access_key=MINIO_ACCESS_KEY,
-                secret_key=MINIO_SECRET_KEY,
-                secure=MINIO_SECURE,
-            )
-            logger.info("minio_client_initialized", endpoint=MINIO_ENDPOINT)
-            
-            # Ensure the bronze bucket exists
-            if not _client.bucket_exists(BRONZE_BUCKET):
-                _client.make_bucket(BRONZE_BUCKET)
-                logger.info("minio_bucket_created", bucket=BRONZE_BUCKET)
-        except Exception as e:
-            logger.error("minio_client_initialization_failed", error=str(e))
-            raise e
+        for attempt in range(1, max_retries + 1):
+            try:
+                _client = Minio(
+                    MINIO_ENDPOINT,
+                    access_key=MINIO_ACCESS_KEY,
+                    secret_key=MINIO_SECRET_KEY,
+                    secure=MINIO_SECURE,
+                )
+                logger.info("minio_client_initialized", endpoint=MINIO_ENDPOINT)
+
+                # Ensure the bronze bucket exists
+                if not _client.bucket_exists(BRONZE_BUCKET):
+                    _client.make_bucket(BRONZE_BUCKET)
+                    logger.info("minio_bucket_created", bucket=BRONZE_BUCKET)
+                break
+            except Exception as e:
+                if attempt == max_retries:
+                    logger.error("minio_client_initialization_failed", error=str(e))
+                    raise e
+                logger.warning(
+                    "minio_connection_retry",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    error=str(e),
+                )
+                time.sleep(retry_delay)
     return _client
 
 
@@ -112,3 +125,42 @@ def save_to_bronze(source: str, data: Union[Dict[str, Any], str, bytes], identif
     except Exception as e:
         logger.error("save_to_bronze_layer_failed", source=source, error=str(e))
         return False
+
+
+def list_bronze_objects(prefix: str = "bronze/", max_results: int = 100) -> List[Dict]:
+    """
+    List objects in the Bronze bucket for debugging and monitoring.
+
+    Parameters
+    ----------
+    prefix : str
+        Object name prefix filter (e.g. 'bronze/binance_websocket/')
+    max_results : int
+        Maximum number of objects to return.
+
+    Returns
+    -------
+    list of dict
+        Each dict contains: name, size, last_modified.
+    """
+    try:
+        client = get_minio_client()
+        objects = client.list_objects(BRONZE_BUCKET, prefix=prefix, recursive=True)
+
+        results = []
+        for obj in objects:
+            results.append({
+                "name": obj.object_name,
+                "size_bytes": obj.size,
+                "last_modified": obj.last_modified.isoformat() if obj.last_modified else None,
+            })
+            if len(results) >= max_results:
+                break
+
+        logger.info("bronze_objects_listed", prefix=prefix, count=len(results))
+        return results
+
+    except Exception as e:
+        logger.error("list_bronze_objects_failed", error=str(e))
+        return []
+

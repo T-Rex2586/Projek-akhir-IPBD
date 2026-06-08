@@ -1,42 +1,41 @@
-# Core dependencies
-requests>=2.31.0
-websockets>=12.0
-feedparser>=6.0.10
-pandas>=2.0.0
-numpy>=1.24.0
+# Core Data & Processing
+requests
+websockets
+feedparser
+pandas
+numpy
 
-# Big Data Processing
-pyspark>=3.5.0
-kafka-python>=2.0.2
+# Big Data
+pyspark
+kafka-python
 
-# Machine Learning & NLP
-scikit-learn>=1.3.0
-nltk>=3.8.1
-joblib>=1.3.0
+# Machine Learning
+scikit-learn
+nltk
+joblib
+tensorflow
+keras
 
-# API & Dashboard
-fastapi>=0.104.0
-uvicorn>=0.24.0
-streamlit>=1.28.0
-plotly>=5.17.0
+# API & Web
+fastapi
+uvicorn[standard]
+python-multipart
+streamlit
+plotly
 
-# Database & Object Storage
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.9
-pymongo>=4.6.0
-minio>=7.2.0
+# Database & Storage
+sqlalchemy
+psycopg2-binary
+minio
 
-# Utilities
-python-dotenv>=1.0.0
-pydantic>=2.4.0
-structlog>=23.2.0
-python-jose>=3.3.0
-passlib>=1.7.4
-python-multipart>=0.0.6
+# Configuration
+python-dotenv
+pydantic
+pydantic-settings
 
-# Orchestration
-apache-airflow>=2.7.0
+# Logging
+structlog
 
-# Testing
-pytest>=7.4.3
-pytest-asyncio>=0.21.1
+# Security
+python-jose
+passlib
