@@ -26,8 +26,8 @@ load_dotenv()
 
 logger = get_logger(__name__)
 
-# Public endpoints — no API key required
-SYMBOLS = ["btcusdt", "ethusdt", "bnbusdt", "solusdt", "adausdt"]
+# Public endpoints — no API key required - BITCOIN ONLY
+SYMBOLS = ["btcusdt"]
 WS_BASE_URL = "wss://stream.binance.com:9443/ws"
 
 # Reconnection settings
@@ -96,7 +96,7 @@ class BinanceWebSocketClient:
                                     'symbol': kline_data['symbol'],
                                     'price': kline_data['close'],
                                     'volume': kline_data['volume'],
-                                    'timestamp': datetime.fromtimestamp(kline_data['close_time'] / 1000)
+                                    'timestamp': datetime.utcfromtimestamp(kline_data['close_time'] / 1000)  # UTC timestamp
                                 }
                                 save_price_data(price_data)
                                 

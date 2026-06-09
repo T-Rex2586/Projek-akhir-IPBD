@@ -6,7 +6,9 @@ Features:
 - Daily/hourly summaries with charts
 - Pipeline health monitoring
 - Price threshold alerts
-- Interactive commands support
+- Interactive commands support (/predict, /status, /help)
+- Auto-alerts for news sentiment (positive & negative)
+- Trading signals (BUY/SELL/HOLD) with ML predictions
 - Rate limiting & deduplication
 - Rich HTML formatting
 - Statistics tracking
@@ -15,6 +17,7 @@ Setup:
 1. Create bot via @BotFather → get token
 2. Get chat_id from @userinfobot
 3. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
+4. Start bot listener: python monitoring/telegram_alert.py
 """
 import os
 import sys
@@ -455,20 +458,342 @@ def send_shutdown_notification():
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Interactive Bot Commands
+# ──────────────────────────────────────────────────────────────────────
+
+def handle_predict_command(symbol: str = "BTCUSDT"):
+    """Handle /predict command - get ML trading signal."""
+    try:
+        from ml.inference.lstm_inference import fetch_recent_data
+        from ml.models.lstm_price_predictor import LSTMPricePredictor
+        
+        # Initialize predictor
+        predictor = LSTMPricePredictor(symbol=symbol)
+        
+        # Load model
+        if not predictor.load_model():
+            text = (
+                f"⚠️ <b>Model Not Found</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"No trained LSTM model for {symbol}.\n"
+                f"\n💡 <i>Train model first:\n"
+                f"python ml/training/train_lstm_model.py --symbol {symbol}</i>"
+            )
+            _send_message(text)
+            return
+        
+        # Fetch recent data
+        df = fetch_recent_data(symbol, hours=6)
+        
+        if df.empty or len(df) < predictor.lookback_window:
+            text = (
+                f"⚠️ <b>Insufficient Data</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Need at least {predictor.lookback_window} records.\n"
+                f"Currently have: {len(df)}\n"
+                f"\n💡 <i>Wait for WebSocket to collect more data</i>"
+            )
+            _send_message(text)
+            return
+        
+        # Make prediction
+        prediction = predictor.predict_next(df)
+        
+        if 'error' in prediction:
+            text = (
+                f"❌ <b>Prediction Error</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"<code>{prediction['error']}</code>"
+            )
+            _send_message(text)
+            return
+        
+        # Send prediction alert
+        signal_emoji = {
+            'BUY': '🟢',
+            'SELL': '🔴',
+            'HOLD': '🟡'
+        }.get(prediction['signal'], '⚪')
+        
+        signal_advice = {
+            'BUY': '📈 Consider buying - price expected to rise',
+            'SELL': '📉 Consider selling - price expected to fall',
+            'HOLD': '⏸️ Hold position - minimal movement expected'
+        }.get(prediction['signal'], '')
+        
+        text = (
+            f"{signal_emoji} <b>LSTM PREDICTION</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💎 <b>Symbol:</b> {symbol}\n"
+            f"💰 <b>Current Price:</b> ${prediction['current_price']:,.2f}\n"
+            f"🔮 <b>Predicted Price:</b> ${prediction['predicted_price']:,.2f}\n"
+            f"📊 <b>Expected Change:</b> {prediction['price_change_pct']:+.2f}%\n"
+            f"\n<b>🎯 TRADING SIGNAL: {prediction['signal']}</b>\n"
+            f"🎲 <b>Confidence:</b> {prediction['confidence']:.1%}\n"
+            f"\n💡 {signal_advice}\n"
+            f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
+            f"\n⚠️ <i>Not financial advice - DYOR!</i>"
+        )
+        
+        _send_message(text)
+        logger.info("telegram_predict_command_handled", symbol=symbol, signal=prediction['signal'])
+        
+    except Exception as e:
+        logger.error("telegram_predict_command_error", error=str(e))
+        text = (
+            f"❌ <b>Command Error</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<code>{_sanitize_error(str(e))}</code>\n"
+            f"\n💡 <i>Check logs for details</i>"
+        )
+        _send_message(text)
+
+
+def handle_status_command():
+    """Handle /status command - get system status."""
+    try:
+        from storage.db_models import get_session, PriceData, NewsArticle, AnomalyEvent
+        from monitoring.logger import metrics as pipeline_metrics
+        
+        session = get_session()
+        
+        try:
+            # Count records
+            price_count = session.query(PriceData).count()
+            news_count = session.query(NewsArticle).count()
+            anomaly_count = session.query(AnomalyEvent).count()
+            
+            # Get latest price
+            latest_price = session.query(PriceData).order_by(
+                PriceData.timestamp.desc()
+            ).first()
+            
+            price_info = ""
+            if latest_price:
+                price_info = (
+                    f"\n<b>💰 Latest Price</b>\n"
+                    f"• {latest_price.symbol}: ${latest_price.price:,.2f}\n"
+                    f"• Updated: {format_wib_short(latest_price.timestamp)}"
+                )
+            
+            stats = get_alert_stats()
+            metrics = pipeline_metrics.get_metrics()
+            
+            text = (
+                f"📊 <b>SYSTEM STATUS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ <b>Pipeline:</b> Running\n"
+                f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
+                f"\n<b>📈 Database Records</b>\n"
+                f"• Price Data: {price_count:,}\n"
+                f"• News Articles: {news_count:,}\n"
+                f"• Anomalies: {anomaly_count}\n"
+                f"{price_info}\n"
+                f"\n<b>🔔 Alert Stats (Today)</b>\n"
+                f"• Total Sent: {stats['total_sent']}\n"
+                f"• Anomalies: {stats['anomalies']}\n"
+                f"• News Alerts: {stats['news_alerts']}\n"
+                f"• Price Spikes: {stats['price_spikes']}\n"
+                f"\n<b>📡 Pipeline Metrics</b>\n"
+                f"• Records Processed: {metrics.get('records_processed', 0):,}\n"
+                f"• Anomalies Detected: {metrics.get('anomalies_detected', 0)}\n"
+                f"• Errors: {metrics.get('errors', 0)}\n"
+                f"\n💡 <i>All systems operational!</i>"
+            )
+            
+            _send_message(text)
+            
+        finally:
+            session.close()
+            
+    except Exception as e:
+        logger.error("telegram_status_command_error", error=str(e))
+        text = (
+            f"❌ <b>Status Check Error</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<code>{_sanitize_error(str(e))}</code>"
+        )
+        _send_message(text)
+
+
+def handle_help_command():
+    """Handle /help command - show available commands."""
+    text = (
+        f"ℹ️ <b>AVAILABLE COMMANDS</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"\n<b>📊 Trading & Analysis</b>\n"
+        f"• <code>/predict</code> - Get AI trading signal (BUY/SELL/HOLD)\n"
+        f"• <code>/predict BTCUSDT</code> - Predict specific symbol\n"
+        f"\n<b>📈 System Info</b>\n"
+        f"• <code>/status</code> - Pipeline status & stats\n"
+        f"• <code>/help</code> - Show this help message\n"
+        f"\n<b>🔔 Auto Alerts</b>\n"
+        f"You will automatically receive:\n"
+        f"• 🟢 Positive news alerts\n"
+        f"• 🔴 Negative news alerts\n"
+        f"• 💹 Price spike alerts\n"
+        f"• 📊 Volume surge alerts\n"
+        f"• 🚨 Anomaly detections\n"
+        f"\n💡 <i>Bot running 24/7!</i>\n"
+        f"🕐 {format_wib_short(now_wib())}"
+    )
+    
+    _send_message(text)
+
+
+def start_bot_listener():
+    """
+    Start listening for Telegram commands.
+    Polls Telegram API for updates and handles commands.
+    Run this in background: python monitoring/telegram_alert.py
+    """
+    if not _is_configured():
+        logger.warning("telegram_bot_not_configured")
+        print("⚠️  Telegram bot not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
+        return
+    
+    logger.info("telegram_bot_listener_started")
+    print("\n" + "="*60)
+    print("🤖 Telegram Bot Listener Started")
+    print("="*60)
+    print(f"Bot Token: {TELEGRAM_BOT_TOKEN[:10]}...{TELEGRAM_BOT_TOKEN[-5:]}")
+    print(f"Chat ID: {TELEGRAM_CHAT_ID}")
+    print("\n📱 Available Commands:")
+    print("  /predict - Get AI trading signal")
+    print("  /status - System status")
+    print("  /help - Show help")
+    print("\n🔔 Auto-alerts enabled for news sentiment!")
+    print("\n⏹️  Press Ctrl+C to stop")
+    print("="*60 + "\n")
+    
+    offset = None
+    
+    try:
+        while True:
+            try:
+                # Poll for updates
+                params = {"timeout": 30, "allowed_updates": ["message"]}
+                if offset:
+                    params["offset"] = offset
+                
+                response = requests.get(
+                    f"{TELEGRAM_API_URL}/getUpdates",
+                    params=params,
+                    timeout=35
+                )
+                
+                if response.status_code != 200:
+                    logger.warning("telegram_poll_failed", status=response.status_code)
+                    continue
+                
+                data = response.json()
+                
+                if not data.get("ok"):
+                    continue
+                
+                updates = data.get("result", [])
+                
+                for update in updates:
+                    offset = update["update_id"] + 1
+                    
+                    message = update.get("message")
+                    if not message or "text" not in message:
+                        continue
+                    
+                    text = message["text"].strip()
+                    chat_id = str(message["chat"]["id"])
+                    
+                    # Only respond to configured chat
+                    if chat_id != TELEGRAM_CHAT_ID:
+                        continue
+                    
+                    logger.info("telegram_command_received", command=text)
+                    print(f"📨 Command: {text}")
+                    
+                    # Handle commands
+                    if text.startswith("/predict"):
+                        parts = text.split()
+                        symbol = parts[1] if len(parts) > 1 else "BTCUSDT"
+                        handle_predict_command(symbol.upper())
+                    elif text == "/status":
+                        handle_status_command()
+                    elif text == "/help" or text == "/start":
+                        handle_help_command()
+                    else:
+                        # Unknown command
+                        _send_message(
+                            f"❓ Unknown command: <code>{text}</code>\n\n"
+                            f"Use /help to see available commands."
+                        )
+                
+            except requests.exceptions.Timeout:
+                # Normal timeout, continue polling
+                continue
+            except requests.exceptions.RequestException as e:
+                logger.error("telegram_poll_error", error=str(e))
+                time.sleep(5)
+                continue
+            except Exception as e:
+                logger.error("telegram_listener_error", error=str(e))
+                time.sleep(5)
+                
+    except KeyboardInterrupt:
+        logger.info("telegram_bot_listener_stopped")
+        print("\n🛑 Bot listener stopped")
+
+
+import time
+
+# ──────────────────────────────────────────────────────────────────────
 # Self-test
 # ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if _is_configured():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Telegram Bot for Crypto Pipeline")
+    parser.add_argument("--test", action="store_true", help="Send test message")
+    parser.add_argument("--listen", action="store_true", help="Start bot listener for commands")
+    parser.add_argument("--predict", type=str, help="Test predict command for symbol")
+    parser.add_argument("--status", action="store_true", help="Test status command")
+    
+    args = parser.parse_args()
+    
+    if not _is_configured():
+        print("❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in .env")
+        print("   Set them first, then run this script again.")
+        sys.exit(1)
+    
+    if args.listen:
+        # Start bot listener
+        start_bot_listener()
+    elif args.predict:
+        # Test predict command
+        handle_predict_command(args.predict.upper())
+    elif args.status:
+        # Test status command
+        handle_status_command()
+    elif args.test:
+        # Send test message
         print("Sending test alert to Telegram...")
         success = _send_message(
             "🧪 <b>TEST ALERT</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "If you see this, Telegram alerts are working!\n"
-            f"🕐 {format_wib(now_wib())}"
+            f"🕐 {format_wib(now_wib())}\n"
+            f"\n💡 Try commands:\n"
+            f"• /predict - Get trading signal\n"
+            f"• /status - System status\n"
+            f"• /help - Show help"
         )
-        # Avoid emojis in Windows print to prevent UnicodeEncodeError
-        print(f"Result: {'Success' if success else 'Failed'}")
+        print(f"Result: {'✅ Success' if success else '❌ Failed'}")
     else:
-        print("X TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in .env")
-        print("   Set them first, then run this script again.")
+        # Show usage
+        print("\n🤖 Telegram Bot for Crypto Pipeline\n")
+        print("Usage:")
+        print("  python monitoring/telegram_alert.py --test      # Test connection")
+        print("  python monitoring/telegram_alert.py --listen    # Start bot listener")
+        print("  python monitoring/telegram_alert.py --predict BTCUSDT  # Test predict")
+        print("  python monitoring/telegram_alert.py --status    # Test status")
+        print("\nMake sure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set in .env")
+

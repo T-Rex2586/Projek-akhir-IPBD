@@ -95,6 +95,20 @@ class RSSBatchProcessor:
                 if save_news_article(article):
                     saved_count += 1
                     metrics.increment("records_processed")
+                    
+                    # Send Telegram alert for significant sentiment
+                    try:
+                        from monitoring.telegram_alert import send_news_sentiment_alert
+                        score = sentiment['compound']
+                        # Alert for strong positive (>0.5) or strong negative (<-0.5)
+                        if abs(score) > 0.5:
+                            send_news_sentiment_alert(
+                                source=article['source'],
+                                sentiment_score=score,
+                                title=article['title']
+                            )
+                    except Exception as alert_err:
+                        logger.debug("telegram_news_alert_skipped", error=str(alert_err))
 
             except Exception as e:
                 logger.error("article_processing_failed", error=str(e))
