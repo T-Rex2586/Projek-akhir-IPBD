@@ -26,6 +26,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
+import html
 
 # Add project root to path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -222,7 +223,7 @@ def send_anomaly_alert(anomaly: dict):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Type:</b> {event_display}\n"
         f"💎 <b>Symbol:</b> {symbol}\n"
-        f"📝 <b>Detail:</b> {anomaly.get('description', '-')}\n"
+        f"📝 <b>Detail:</b> {html.escape(str(anomaly.get('description', '-')))}\n"
         f"📊 <b>Value:</b> {anomaly.get('value', '-')}\n"
         f"⚡ <b>Threshold:</b> {anomaly.get('threshold', '-')}\n"
         f"🔥 <b>Severity:</b> {severity.upper()}\n"
@@ -333,9 +334,9 @@ def send_news_sentiment_alert(source: str, sentiment_score: float, title: str):
     text = (
         f"{emoji} <b>{label}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📰 <b>Source:</b> {source}\n"
+        f"📰 <b>Source:</b> {html.escape(source)}\n"
         f"📊 <b>Sentiment:</b> {sentiment_score:+.3f}\n"
-        f"📝 <b>Headline:</b> {title[:150]}\n"
+        f"📝 <b>Headline:</b> {html.escape(title[:150])}\n"
         f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
         f"\n💡 <i>{'📈 Bullish signal!' if sentiment_score > 0 else '📉 Bearish signal!'}</i>"
     )
@@ -356,8 +357,8 @@ def send_pipeline_error_alert(component: str, error_msg: str):
     text = (
         f"⛔ <b>PIPELINE ERROR</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔧 <b>Component:</b> {component}\n"
-        f"❌ <b>Error:</b> <code>{safe_error}</code>\n"
+        f"🔧 <b>Component:</b> {html.escape(component)}\n"
+        f"❌ <b>Error:</b> <code>{html.escape(safe_error)}</code>\n"
         f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
         f"\n⚠️ <i>Action required! Check logs immediately.</i>"
     )

@@ -218,17 +218,19 @@ class StreamProcessor:
         compound = message.get("sentiment_score", 0)
         source = message.get("source", "unknown")
 
-        if compound < -0.6:
+        if abs(compound) > 0.6:
+            event_type = "stream_sentiment_crash" if compound < 0 else "stream_sentiment_surge"
+            sentiment_type = "Negative" if compound < 0 else "Positive"
             anomaly = {
-                "event_type": "stream_sentiment_crash",
+                "event_type": event_type,
                 "description": (
-                    f"Negative sentiment spike from {source}: "
+                    f"{sentiment_type} sentiment spike from {source}: "
                     f"score={compound:.3f}, "
                     f"title={message.get('title', '')[:100]}"
                 ),
                 "severity": "high",
                 "value": compound,
-                "threshold": -0.6,
+                "threshold": -0.6 if compound < 0 else 0.6,
             }
             save_anomaly_event(anomaly, send_alert=False)
             metrics.increment("anomalies_detected")
