@@ -1,0 +1,343 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+:root {
+  --bg-main: #0b0e11;
+  --bg-panel: #181a20;
+  --bg-hover: #2b3139;
+  
+  --border-color: #2b3139;
+  --border-highlight: #474d57;
+  
+  --text-primary: #eaecef;
+  --text-secondary: #848e9c;
+  
+  --color-up: #0ecb81;
+  --color-down: #f6465d;
+  --color-brand: #fcd535; /* Binance Yellow */
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Typography */
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.text-up { color: var(--color-up); }
+.text-down { color: var(--color-down); }
+
+/* Header Navbar */
+.navbar {
+  height: 60px;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+}
+
+.navbar-brand {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-brand);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.5px;
+}
+
+.navbar-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-live { background-color: var(--color-up); box-shadow: 0 0 8px var(--color-up); }
+.status-offline { background-color: var(--color-down); }
+
+/* Main Layout */
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr 320px 280px;
+  grid-template-rows: auto 1fr;
+  flex: 1;
+  height: calc(100vh - 60px);
+  gap: 1px;
+  background-color: var(--border-color); /* Creates 1px borders between panels */
+}
+
+/* Panels */
+.panel {
+  background-color: var(--bg-main);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 12px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* Metric Ticker (Top Row) */
+.ticker-row {
+  grid-column: 1 / -1;
+  background-color: var(--bg-panel);
+  display: flex;
+  gap: 32px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ticker-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ticker-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.ticker-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.ticker-large {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+/* Lists (News & Anomalies) */
+.list-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item-title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.list-item-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-highlight);
+}
+
+@media (max-width: 1400px) {
+  .dashboard-layout {
+    grid-template-columns: 260px 1fr 300px;
+  }
+  .panel:last-child {
+    display: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr 300px;
+  }
+  .panel:first-child {
+    display: none;
+  }
+}
+
+/* Order Book Styles */
+.ob-panel {
+  display: flex;
+  flex-direction: column;
+}
+.ob-pair-label {
+  font-size: 0.75rem;
+  background: var(--bg-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ob-header {
+  display: flex;
+  padding: 8px 16px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+.ob-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+.ob-row {
+  display: flex;
+  position: relative;
+  padding: 2px 16px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.ob-row:hover {
+  background-color: var(--bg-hover);
+}
+.ob-bg-bar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  z-index: 0;
+  transition: width 0.1s ease-out;
+}
+.ob-cell {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  text-align: right;
+}
+.ob-cell:first-child {
+  text-align: left;
+}
+.ob-spread {
+  padding: 8px 16px;
+  text-align: center;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  margin: 4px 0;
+  background-color: #1A2030;
+}
+@keyframes flashRow {
+  0% { background-color: rgba(255, 255, 255, 0.2); }
+  100% { background-color: transparent; }
+}
+.flash-row {
+  animation: flashRow 0.3s ease-out;
+}
+
+/* Analysis Tab Styles */
+.analysis-layout {
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  gap: 24px;
+  overflow-y: auto;
+  height: calc(100vh - 60px);
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+}
+
+.prediction-card {
+  background: linear-gradient(145deg, var(--bg-panel) 0%, #1a1e24 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.signal-buy { color: var(--color-up); font-weight: bold; }
+.signal-sell { color: var(--color-down); font-weight: bold; }
+.signal-hold { color: var(--color-brand); font-weight: bold; }
+
+.main-tabs {
+  display: flex;
+  gap: 24px;
+  height: 100%;
+}
+
+.main-tab {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.main-tab.active {
+  color: var(--text-primary);
+}
+
+.main-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: var(--color-brand);
+}

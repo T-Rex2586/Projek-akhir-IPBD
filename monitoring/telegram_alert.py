@@ -215,8 +215,19 @@ def send_anomaly_alert(anomaly: dict):
         "volatility_spike": "⚡ High Volatility",
         "sudden_drop": "📉 Sudden Drop",
         "ml_anomaly": "🤖 ML Anomaly",
-        "batch_ml_anomaly": "🤖 ML Anomaly (Batch)"
+        "batch_ml_anomaly": "🤖 ML Anomaly (Batch)",
+        "whale_trade": "🐋 Whale Trade",
+        "bearish_divergence": "⚠️ Bearish Divergence",
+        "bullish_divergence": "🚀 Bullish Divergence"
     }.get(event_type, event_type.replace("_", " ").title())
+
+    # Customize Emoji based on event type
+    if "whale" in event_type:
+        severity_emoji = "🐋"
+    elif "bullish" in event_type:
+        severity_emoji = "🚀"
+    elif "bearish" in event_type:
+        severity_emoji = "⚠️"
 
     text = (
         f"{severity_emoji} <b>ANOMALY DETECTED</b>\n"

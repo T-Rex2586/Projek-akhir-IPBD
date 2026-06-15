@@ -61,12 +61,13 @@ python -m api.main
 # API akan berjalan di http://localhost:8001
 ```
 
-### 5. Start Dashboard (Real-time 1-detik refresh!)
+### 5. Start Dashboard (Real-time React UI)
 ```bash
-# Terminal 3: Dashboard real-time
-streamlit run dashboard/app.py
-# Dashboard: http://localhost:8501
-# Refresh otomatis setiap 1 detik!
+# Terminal 3: Dashboard real-time (React Vite)
+cd dashboard
+npm run dev
+# Dashboard: http://localhost:5173
+# Data akan refresh otomatis!
 ```
 
 ### 6. Start Telegram Bot (OPSIONAL tapi RECOMMENDED!)
@@ -164,27 +165,45 @@ python reset_database.py
 # Script sudah ada fallback ke multiple endpoints
 ```
 
+### API Server Error: `[winerror 10048]`
+```bash
+# Error ini terjadi karena server API lama masih berjalan di port 8001
+# Buka PowerShell sebagai Administrator dan jalankan:
+Stop-Process -Id (Get-NetTCPConnection -LocalPort 8001).OwningProcess -Force
+# Setelah itu jalankan kembali: python -m api.main
+```
+
+### Layar Dashboard Kosong / Hitam
+- Pastikan Anda menggunakan API versi terbaru
+- Refresh browser (Tekan F5)
+- Pastikan script agregator (`python processing/gold_processor.py`) sudah berjalan setidaknya satu kali agar tabel agregasi terbentuk.
+
 ---
 
 ## 📋 Urutan Operasional Harian
 
 ```bash
-# 1. Start services
+# 1. Start services (Database, Kafka, MinIO)
 docker-compose up -d
 
 # 2. Start data ingestion (WAJIB - jangan dimatikan)
 python ingestion/binance_websocket.py &
 
 # 3. Start API server (WAJIB untuk dashboard)  
-python api/main.py &
+python -m api.main &
 
 # 4. Start dashboard
-streamlit run dashboard/app.py
+cd dashboard
+npm run dev
 
-# 5. Start Telegram Bot (RECOMMENDED!)
+# 5. Start Aggregation & NLP Metrics (WAJIB untuk M3 / Divergence)
+# Script ini akan menghitung rata-rata harga dan ekstraksi topik setiap 1 jam
+python processing/gold_processor.py &
+
+# 6. Start Telegram Bot (RECOMMENDED!)
 python start_telegram_bot.py &
 
-# 6. Optional: News scraping dengan auto-alerts
+# 7. Optional: News scraping dengan auto-alerts
 python ingestion/rss_batch.py --mode continuous
 ```
 
@@ -192,7 +211,7 @@ python ingestion/rss_batch.py --mode continuous
 
 ## 🌐 URLs
 
-- **Dashboard**: http://localhost:8501
+- **Dashboard**: http://localhost:5173
 - **API Docs**: http://localhost:8001/docs  
 - **Health Check**: http://localhost:8001/health
 - **API Base**: http://localhost:8001

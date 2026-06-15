@@ -7,10 +7,13 @@ for resilience during container startup.
 """
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import time
 from dotenv import load_dotenv
+
+def now_utc():
+    return datetime.now(timezone.utc)
 
 load_dotenv()
 
@@ -28,7 +31,7 @@ class PriceData(Base):
     high_24h = Column(Float)
     low_24h = Column(Float)
     change_24h = Column(Float)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime(timezone=True), default=now_utc, index=True)
     source = Column(String(50), default='binance')
 
     def __repr__(self):
@@ -46,8 +49,8 @@ class KlineData(Base):
     low_price = Column(Float, nullable=False)
     close_price = Column(Float, nullable=False)
     volume = Column(Float, nullable=False)
-    open_time = Column(DateTime, nullable=False, index=True)
-    close_time = Column(DateTime, nullable=False)
+    open_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    close_time = Column(DateTime(timezone=True), nullable=False)
     interval = Column(String(10), default='1m')
 
     def __repr__(self):
@@ -63,8 +66,8 @@ class NewsArticle(Base):
     content = Column(Text)
     url = Column(String(1000), unique=True)
     source = Column(String(100), nullable=False)
-    published_at = Column(DateTime, index=True)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+    published_at = Column(DateTime(timezone=True), index=True)
+    fetched_at = Column(DateTime(timezone=True), default=now_utc)
     sentiment_score = Column(Float)
     sentiment_label = Column(String(20))
 
@@ -83,7 +86,7 @@ class AnomalyEvent(Base):
     severity = Column(String(20))
     value = Column(Float)
     threshold = Column(Float)
-    detected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    detected_at = Column(DateTime(timezone=True), default=now_utc, index=True)
     resolved = Column(Boolean, default=False)
 
     def __repr__(self):
@@ -100,8 +103,8 @@ class PipelineMetadata(Base):
     status = Column(String(20))
     records_processed = Column(Integer)
     errors = Column(Integer)
-    started_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime)
+    started_at = Column(DateTime(timezone=True), default=now_utc)
+    completed_at = Column(DateTime(timezone=True))
     run_details = Column(Text)
 
     def __repr__(self):
@@ -123,8 +126,8 @@ class GoldHourlyMetrics(Base):
     avg_sentiment = Column(Float)
     sentiment_signal_count = Column(Integer, default=0)
     anomaly_event_count = Column(Integer, default=0)
-    window_start = Column(DateTime, nullable=False, index=True)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    window_start = Column(DateTime(timezone=True), nullable=False, index=True)
+    last_updated = Column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
     __table_args__ = (
         UniqueConstraint('symbol', 'window_start', name='uq_gold_symbol_window'),

@@ -12,6 +12,7 @@ import time
 import os
 import sys
 from datetime import datetime
+import pytz
 from typing import Dict
 import websockets
 
@@ -43,7 +44,7 @@ class BinanceWebSocketClient:
         self.ws_url = WS_BASE_URL
         logger.info("binance_websocket_client_initialized", symbols=self.symbols)
 
-    async def stream_kline(self, symbol: str, interval: str = "1m"):
+    async def stream_kline(self, symbol: str, interval: str = "1s"):
         """Stream candlestick data for a symbol with auto-reconnect."""
         url = f"{self.ws_url}/{symbol}@kline_{interval}"
         reconnect_delay = INITIAL_RECONNECT_DELAY
@@ -90,13 +91,25 @@ class BinanceWebSocketClient:
 
                             # Save to Silver (PostgreSQL)
                             if save_kline_data(kline_data):
+                                # Convert timestamp specifically for logging and price data
+                                wib = pytz.timezone('Asia/Jakarta')
+                                dt_utc = datetime.fromtimestamp(kline_data['close_time'] / 1000, tz=pytz.UTC)
+                                dt_wib = dt_utc.astimezone(wib)
+                                
+                                logger.info(
+                                    "time_conversion_verified",
+                                    raw_binance_ms=kline_data['close_time'],
+                                    parsed_utc=str(dt_utc),
+                                    converted_wib=str(dt_wib)
+                                )
+
                                 # Also save to PriceData for dashboard compatibility
                                 from storage.db_utils import save_price_data
                                 price_data = {
                                     'symbol': kline_data['symbol'],
                                     'price': kline_data['close'],
                                     'volume': kline_data['volume'],
-                                    'timestamp': datetime.utcfromtimestamp(kline_data['close_time'] / 1000)  # UTC timestamp
+                                    'timestamp': dt_wib  # Timezone-aware WIB
                                 }
                                 save_price_data(price_data)
                                 
@@ -155,11 +168,11 @@ class BinanceWebSocketClient:
                     "symbol": kline_data["symbol"],
                     "description": (
                         f"{kline_data['symbol']} {direction} "
-                        f"{abs_change * 100:.2f}% in 1 minute "
+                        f"{abs_change * 100:.2f}% in 1 second "
                         f"(${open_price:,.2f} → ${close_price:,.2f})"
                     ),
                     "severity": "high" if abs_change > 0.05 else "medium",
-                    "value": price_change,
+                    "value": float(price_change * 100),
                     "threshold": PRICE_CHANGE_THRESHOLD,
                 }
 
@@ -169,6 +182,31 @@ class BinanceWebSocketClient:
                     "price_anomaly_detected",
                     symbol=kline_data["symbol"],
                     change_pct=price_change * 100,
+                )
+                
+            # Check for Whale Trade (High volume in 1 second)
+            # Assumption: if volume * close_price > $100,000 in a 1-second candle, it's a whale
+            volume = float(kline_data.get("volume", 0))
+            notional_value = volume * close_price
+            WHALE_THRESHOLD = 100000.0  # $100k
+            
+            if notional_value > WHALE_THRESHOLD:
+                from storage.db_utils import save_anomaly_event
+                
+                whale_anomaly = {
+                    "event_type": "whale_trade",
+                    "symbol": kline_data["symbol"],
+                    "description": f"Whale detected! {volume:.2f} BTC traded (${notional_value:,.0f})",
+                    "severity": "high" if notional_value > 500000 else "medium",
+                    "value": float(notional_value),
+                    "threshold": WHALE_THRESHOLD,
+                }
+                save_anomaly_event(whale_anomaly, send_alert=True)
+                metrics.increment("whale_trades_detected")
+                logger.warning(
+                    "whale_trade_detected",
+                    symbol=kline_data["symbol"],
+                    notional=notional_value
                 )
 
                 # Send Telegram price spike alert

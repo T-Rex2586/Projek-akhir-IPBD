@@ -112,9 +112,9 @@ def start_websocket():
             print("❌ WebSocket failed to start")
             return False
             
-    except Exception as e:
-        print(f"❌ Error starting WebSocket: {e}")
-        return False
+        except Exception as e:
+            print(f"❌ Error starting WebSocket: {e}")
+            return False
 
 def start_api():
     """Start API server in background."""

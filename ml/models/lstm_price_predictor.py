@@ -312,12 +312,19 @@ class LSTMPricePredictor:
             confidence=round(confidence, 3)
         )
         
+        # Calculate probabilistic fan bounds (max 5% margin of error adjusted by confidence)
+        margin_of_error_pct = (1.0 - confidence) * 0.05
+        lower_bound = predicted_price * (1.0 - margin_of_error_pct)
+        upper_bound = predicted_price * (1.0 + margin_of_error_pct)
+
         return {
-            "predicted_price": predicted_price,
-            "current_price": current_price,
-            "price_change_pct": ((predicted_price - current_price) / current_price) * 100,
+            "predicted_price": float(predicted_price),
+            "current_price": float(current_price),
+            "price_change_pct": float(((predicted_price - current_price) / current_price) * 100),
             "signal": signal,
-            "confidence": confidence,
+            "confidence": float(confidence),
+            "lower_bound": float(lower_bound),
+            "upper_bound": float(upper_bound),
             "timestamp": datetime.utcnow().isoformat()
         }
     

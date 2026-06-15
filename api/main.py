@@ -281,6 +281,22 @@ def get_anomalies(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/news/topics", tags=["Sentiment"])
+def get_news_topics(
+    hours: int = 24,
+    limit: int = 15,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get narrative topic map based on recent news articles."""
+    try:
+        from ml.nlp.topic_extractor import extract_topics
+        topics = extract_topics(hours=hours, top_n=limit)
+        return topics
+    except Exception as e:
+        logger.error("news_topics_fetch_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/news", response_model=List[NewsResponse], tags=["Sentiment"])
 def get_news(
     limit: int = 50,
@@ -360,6 +376,57 @@ def get_gold_metrics(
         return metrics_list
     except Exception as e:
         logger.error("gold_metrics_fetch_failed", symbol=symbol, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/divergence/{symbol}", tags=["Analytics"])
+def get_divergence_gauge(
+    symbol: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Calculate sentiment-price divergence gauge."""
+    try:
+        metrics_list = get_gold_hourly_metrics(symbol.upper(), hours=24)
+        if len(metrics_list) < 2:
+            return {"symbol": symbol, "divergence": 0.0, "status": "neutral", "price_z": 0.0, "sentiment_z": 0.0}
+            
+        prices = [m['avg_price'] for m in metrics_list if m['avg_price'] is not None]
+        sentiments = [m['avg_sentiment'] for m in metrics_list if m['avg_sentiment'] is not None]
+        
+        if not prices or not sentiments or len(prices) < 2:
+            return {"symbol": symbol, "divergence": 0.0, "status": "neutral", "price_z": 0.0, "sentiment_z": 0.0}
+            
+        import numpy as np
+        # Calculate z-scores for the latest hour
+        price_mean, price_std = np.mean(prices), np.std(prices)
+        sent_mean, sent_std = np.mean(sentiments), np.std(sentiments)
+        
+        latest_price = prices[-1]
+        latest_sent = sentiments[-1]
+        
+        price_z = (latest_price - price_mean) / price_std if price_std > 0 else 0
+        sent_z = (latest_sent - sent_mean) / sent_std if sent_std > 0 else 0
+        
+        divergence = price_z - sent_z
+        
+        # Determine status
+        status = "neutral"
+        if divergence > 1.5:
+            status = "bearish_divergence" # Price way up, sentiment way down
+        elif divergence < -1.5:
+            status = "bullish_divergence" # Price way down, sentiment way up
+            
+        return {
+            "symbol": symbol,
+            "price_z": float(price_z),
+            "sentiment_z": float(sent_z),
+            "divergence": float(divergence),
+            "status": status,
+            "latest_price": latest_price,
+            "latest_sentiment": latest_sent
+        }
+    except Exception as e:
+        logger.error("divergence_calc_failed", symbol=symbol, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -463,6 +530,8 @@ def get_lstm_prediction(
             "price_change_pct": prediction['price_change_pct'],
             "signal": prediction['signal'],
             "confidence": prediction['confidence'],
+            "lower_bound": prediction.get('lower_bound'),
+            "upper_bound": prediction.get('upper_bound'),
             "timestamp": prediction['timestamp'],
             "model_version": "lstm_v1"
         }

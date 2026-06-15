@@ -17,7 +17,7 @@ from storage.db_models import (
     AnomalyEvent, GoldHourlyMetrics,
 )
 from monitoring.logger import get_logger
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 logger = get_logger(__name__)
@@ -36,7 +36,7 @@ def save_price_data(data: Dict) -> bool:
             high_24h=data.get('high_24h'),
             low_24h=data.get('low_24h'),
             change_24h=data.get('change_24h'),
-            timestamp=data.get('timestamp', datetime.utcnow())
+            timestamp=data.get('timestamp', datetime.now(timezone.utc))
         )
         session.add(price)
         session.commit()
@@ -61,8 +61,8 @@ def save_kline_data(data: Dict) -> bool:
             low_price=data['low'],
             close_price=data['close'],
             volume=data['volume'],
-            open_time=datetime.utcfromtimestamp(data['open_time'] / 1000),  # Store as UTC
-            close_time=datetime.utcfromtimestamp(data['close_time'] / 1000),  # Store as UTC
+            open_time=datetime.fromtimestamp(data['open_time'] / 1000, tz=timezone.utc),
+            close_time=datetime.fromtimestamp(data['close_time'] / 1000, tz=timezone.utc),
             interval=data.get('interval', '1m')
         )
         session.add(kline)
@@ -152,7 +152,7 @@ def save_pipeline_metadata(data: Dict) -> bool:
             status=data.get('status', 'running'),
             records_processed=data.get('records_processed', 0),
             errors=data.get('errors', 0),
-            started_at=data.get('started_at', datetime.utcnow()),
+            started_at=data.get('started_at', datetime.now(timezone.utc)),
             completed_at=data.get('completed_at'),
             run_details=data.get('run_details'),
         )
@@ -195,7 +195,7 @@ def get_recent_prices(symbol: str, hours: int = 24) -> List[Dict]:
     """Get recent price data for a symbol."""
     session = get_session()
     try:
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         prices = session.query(PriceData).filter(
             PriceData.symbol == symbol,
             PriceData.timestamp >= since
@@ -223,7 +223,7 @@ def get_recent_anomalies(hours: int = 24) -> List[Dict]:
     """Get recent anomaly events."""
     session = get_session()
     try:
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         anomalies = session.query(AnomalyEvent).filter(
             AnomalyEvent.detected_at >= since
         ).order_by(AnomalyEvent.detected_at.desc()).all()
@@ -354,7 +354,7 @@ def get_gold_hourly_metrics(symbol: str, hours: int = 24) -> List[Dict]:
     """Retrieve Gold Hourly Metrics for visual consumption."""
     session = get_session()
     try:
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         metrics_list = session.query(GoldHourlyMetrics).filter(
             GoldHourlyMetrics.symbol == symbol,
             GoldHourlyMetrics.window_start >= since
