@@ -38,3 +38,7 @@ structlog
 # Security
 python-jose
 passlib
+
+# Monitoring
+prometheus-fastapi-instrumentator
+prometheus-client

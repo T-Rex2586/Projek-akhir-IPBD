@@ -45,6 +45,8 @@ async def lifespan(app: FastAPI):
     logger.info("api_server_shutting_down")
 
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 app = FastAPI(
     title="API Analitik Harga & Sentimen Kripto",
     description=(
@@ -58,6 +60,9 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+# Instrumentasi Prometheus untuk mengukur metrik seperti latensi, tingkat kesalahan, dll.
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
