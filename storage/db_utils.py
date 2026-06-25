@@ -1,16 +1,7 @@
 """
-Database utility functions.
-
-Every function follows the safe session pattern:
-    session = get_session()
-    try:
-        ...
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+Modul fungsionalitas interaksi basis data terstruktur.
+Menyediakan prosedur operasional standar guna menyimpan dan menarik
+data dari dan menuju PostgreSQL.
 """
 from storage.db_models import (
     get_session, PriceData, KlineData, NewsArticle,
@@ -22,11 +13,31 @@ from typing import List, Dict, Optional
 
 logger = get_logger(__name__)
 
+_db_error_state = False
 
-# ── Save helpers ─────────────────────────────────────────────────────
+def _handle_db_success():
+    global _db_error_state
+    if _db_error_state:
+        _db_error_state = False
+        try:
+            from monitoring.telegram_alert import send_pipeline_resolved_alert
+            send_pipeline_resolved_alert("Database PostgreSQL")
+        except Exception:
+            pass
+
+def _handle_db_error(error_msg: str):
+    global _db_error_state
+    if not _db_error_state:
+        _db_error_state = True
+        try:
+            from monitoring.telegram_alert import send_pipeline_error_alert
+            send_pipeline_error_alert("Database PostgreSQL", error_msg)
+        except Exception:
+            pass
+
 
 def save_price_data(data: Dict) -> bool:
-    """Save price data to database."""
+    """Menyimpan rekaman observasi harga tunggal."""
     session = get_session()
     try:
         price = PriceData(
@@ -40,18 +51,20 @@ def save_price_data(data: Dict) -> bool:
         )
         session.add(price)
         session.commit()
+        _handle_db_success()
         logger.info("price_data_saved", symbol=data['symbol'])
         return True
     except Exception as e:
         session.rollback()
         logger.error("price_data_save_failed", error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
 def save_kline_data(data: Dict) -> bool:
-    """Save kline/candlestick data to database."""
+    """Menyimpan agregat data harga dalam bentuk kandil (Kline)."""
     session = get_session()
     try:
         kline = KlineData(
@@ -67,21 +80,22 @@ def save_kline_data(data: Dict) -> bool:
         )
         session.add(kline)
         session.commit()
+        _handle_db_success()
         logger.info("kline_data_saved", symbol=data['symbol'])
         return True
     except Exception as e:
         session.rollback()
         logger.error("kline_data_save_failed", error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
 def save_news_article(data: Dict) -> bool:
-    """Save news article to database."""
+    """Menyimpan materi berita beserta atribut hasil evaluasi sentimen."""
     session = get_session()
     try:
-        # Check if article already exists
         existing = session.query(NewsArticle).filter_by(url=data['url']).first()
         if existing:
             logger.debug("article_already_exists", url=data['url'])
@@ -98,18 +112,20 @@ def save_news_article(data: Dict) -> bool:
         )
         session.add(article)
         session.commit()
+        _handle_db_success()
         logger.info("news_article_saved", source=data['source'])
         return True
     except Exception as e:
         session.rollback()
         logger.error("news_article_save_failed", error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
 def save_anomaly_event(data: Dict, send_alert: bool = True) -> bool:
-    """Save anomaly detection event and optionally send Telegram alert."""
+    """Menyimpan detail perihal kejadian anomali, dan mentransmisikan notifikasi bila direpresentasikan."""
     session = get_session()
     try:
         anomaly = AnomalyEvent(
@@ -122,9 +138,9 @@ def save_anomaly_event(data: Dict, send_alert: bool = True) -> bool:
         )
         session.add(anomaly)
         session.commit()
+        _handle_db_success()
         logger.warning("anomaly_detected", event_type=data['event_type'], symbol=data.get('symbol'))
 
-        # Send Telegram alert (non-blocking)
         if send_alert:
             try:
                 from monitoring.telegram_alert import send_anomaly_alert
@@ -136,13 +152,14 @@ def save_anomaly_event(data: Dict, send_alert: bool = True) -> bool:
     except Exception as e:
         session.rollback()
         logger.error("anomaly_save_failed", error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
 def save_pipeline_metadata(data: Dict) -> bool:
-    """Save pipeline run metadata."""
+    """Merekam rekapan jejak eksekusi modul-modul sistem."""
     from storage.db_models import PipelineMetadata
     session = get_session()
     try:
@@ -158,18 +175,20 @@ def save_pipeline_metadata(data: Dict) -> bool:
         )
         session.add(meta)
         session.commit()
+        _handle_db_success()
         logger.info("pipeline_metadata_saved", pipeline=data['pipeline_name'])
         return True
     except Exception as e:
         session.rollback()
         logger.error("pipeline_metadata_save_failed", error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
 def update_pipeline_metadata(run_id: str, **kwargs) -> bool:
-    """Update an existing pipeline metadata record."""
+    """Memperbarui informasi rekapan modul pemrosesan yang ada."""
     from storage.db_models import PipelineMetadata
     session = get_session()
     try:
@@ -180,26 +199,26 @@ def update_pipeline_metadata(run_id: str, **kwargs) -> bool:
             if hasattr(meta, key):
                 setattr(meta, key, value)
         session.commit()
+        _handle_db_success()
         return True
     except Exception as e:
         session.rollback()
         logger.error("pipeline_metadata_update_failed", error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
-# ── Query helpers ────────────────────────────────────────────────────
-
 def get_recent_prices(symbol: str, hours: int = 24) -> List[Dict]:
-    """Get recent price data for a symbol."""
+    """Mengekstraksi rekaman histori harga mutakhir pada selang waktu spesifik."""
     session = get_session()
     try:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         prices = session.query(PriceData).filter(
             PriceData.symbol == symbol,
             PriceData.timestamp >= since
-        ).order_by(PriceData.timestamp.asc()).all()  # ASCENDING for chronological order
+        ).order_by(PriceData.timestamp.asc()).all()
 
         result = [{
             'symbol': p.symbol,
@@ -208,19 +227,19 @@ def get_recent_prices(symbol: str, hours: int = 24) -> List[Dict]:
             'timestamp': p.timestamp
         } for p in prices]
         
-        logger.info("get_recent_prices", symbol=symbol, count=len(result), 
-                   latest=result[-1]['timestamp'] if result else None)
-        
+        logger.info("get_recent_prices", symbol=symbol, count=len(result), latest=result[-1]['timestamp'] if result else None)
+        _handle_db_success()
         return result
     except Exception as e:
         logger.error("get_recent_prices_failed", error=str(e))
+        _handle_db_error(str(e))
         return []
     finally:
         session.close()
 
 
 def get_recent_anomalies(hours: int = 24) -> List[Dict]:
-    """Get recent anomaly events."""
+    """Menarik senarai anomali deteksi berbasis kurun waktu kronologis."""
     session = get_session()
     try:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -235,27 +254,25 @@ def get_recent_anomalies(hours: int = 24) -> List[Dict]:
             'severity': a.severity,
             'detected_at': a.detected_at
         } for a in anomalies]
+        
+        _handle_db_success()
+        return result
     except Exception as e:
         logger.error("get_recent_anomalies_failed", error=str(e))
+        _handle_db_error(str(e))
         return []
     finally:
         session.close()
 
 
-# ── Gold Layer ───────────────────────────────────────────────────────
-
 def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) -> bool:
-    """
-    Calculate and persist high-value business aggregated metrics (Gold layer)
-    for a specific symbol and 1-hour window.
-    """
+    """Melakukan komputasi sekaligus mencadangkan luaran matriks bisnis (Lapisan Emas)."""
     from sqlalchemy import func, or_
 
     window_end = window_start + timedelta(hours=1)
     session = get_session()
 
     try:
-        # 1. Price metrics
         price_stats = session.query(
             func.avg(PriceData.price).label('avg'),
             func.min(PriceData.price).label('min'),
@@ -267,7 +284,6 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
         ).first()
 
         if not price_stats or price_stats.avg is None:
-            # Try KlineData as fallback if PriceData is empty
             kline_stats = session.query(
                 func.avg(KlineData.close_price).label('avg'),
                 func.min(KlineData.low_price).label('min'),
@@ -282,8 +298,6 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
             else:
                 return False
 
-        # 2. News sentiment metrics
-        # Map crypto symbols to subreddits or keywords
         kw_map = {
             "BTCUSDT": ["bitcoin", "btc"],
             "ETHUSDT": ["ethereum", "eth"],
@@ -302,18 +316,15 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
             or_(*[NewsArticle.title.ilike(f'%{kw}%') for kw in kws])
         ).first()
 
-        # Combine sentiment
         total_signals = news_sentiment.count or 0
         avg_sentiment = news_sentiment.avg or 0.0
 
-        # 3. Anomalies
         anomalies_count = session.query(func.count(AnomalyEvent.id)).filter(
             AnomalyEvent.symbol == symbol,
             AnomalyEvent.detected_at >= window_start,
             AnomalyEvent.detected_at < window_end
         ).scalar() or 0
 
-        # Save/update Gold Layer record
         gold = session.query(GoldHourlyMetrics).filter(
             GoldHourlyMetrics.symbol == symbol,
             GoldHourlyMetrics.window_start == window_start
@@ -340,18 +351,20 @@ def calculate_and_save_gold_hourly_metrics(symbol: str, window_start: datetime) 
             gold.anomaly_event_count = anomalies_count
 
         session.commit()
+        _handle_db_success()
         logger.info("gold_hourly_metrics_computed", symbol=symbol, window=window_start.isoformat())
         return True
     except Exception as e:
         session.rollback()
         logger.error("gold_hourly_metrics_computation_failed", symbol=symbol, error=str(e))
+        _handle_db_error(str(e))
         return False
     finally:
         session.close()
 
 
 def get_gold_hourly_metrics(symbol: str, hours: int = 24) -> List[Dict]:
-    """Retrieve Gold Hourly Metrics for visual consumption."""
+    """Menyediakan daftar metrik konsolidatif dari tabel Lapisan Emas untuk representasi grafis."""
     session = get_session()
     try:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -361,7 +374,7 @@ def get_gold_hourly_metrics(symbol: str, hours: int = 24) -> List[Dict]:
         ).order_by(GoldHourlyMetrics.window_start.asc()).all()
 
         return [{
-            'window_start': m.window_start,  # return datetime, not string
+            'window_start': m.window_start,
             'symbol': m.symbol,
             'avg_price': m.avg_price,
             'min_price': m.min_price,
@@ -370,8 +383,12 @@ def get_gold_hourly_metrics(symbol: str, hours: int = 24) -> List[Dict]:
             'sentiment_signal_count': m.sentiment_signal_count,
             'anomaly_event_count': m.anomaly_event_count
         } for m in metrics_list]
+        
+        _handle_db_success()
+        return result
     except Exception as e:
         logger.error("get_gold_hourly_metrics_failed", symbol=symbol, error=str(e))
+        _handle_db_error(str(e))
         return []
     finally:
         session.close()

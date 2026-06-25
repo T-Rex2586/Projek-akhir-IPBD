@@ -29,11 +29,26 @@ function App() {
   const [prediction, setPrediction] = useState(null);
   const [predError, setPredError] = useState(null);
   const [goldMetrics, setGoldMetrics] = useState([]);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+
+  const handlePredictNow = async () => {
+    setIsPredicting(true);
+    try {
+      const predRes = await api.get('/predict/BTCUSDT');
+      setPrediction(predRes.data);
+      setPredError(null);
+    } catch (error) {
+      setPredError(error.response?.data?.detail || "Prediction unavailable");
+    } finally {
+      setIsPredicting(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
       const healthRes = await api.get('/health');
-      setIsLive(healthRes.data.status === 'healthy');
+      setIsLive(healthRes.data.status === 'healthy' || healthRes.data.status === 'sehat');
 
       const newsRes = await api.get('/news', { params: { limit: 15 } });
       const newsList = newsRes.data || [];
@@ -74,8 +89,8 @@ function App() {
         setStats({
           currentPrice,
           change24h: change,
-          high24h: Math.max(...prices),
-          low24h: Math.min(...prices),
+          high24h: prices.length > 0 ? prices.reduce((a, b) => Math.max(a, b), -Infinity) : 0,
+          low24h: prices.length > 0 ? prices.reduce((a, b) => Math.min(a, b), Infinity) : 0,
           volume24h: volumes.reduce((a, b) => a + b, 0)
         });
       }
@@ -83,28 +98,35 @@ function App() {
       const anomRes = await api.get('/anomalies', { params: { hours: 24 } });
       setAnomalies(anomRes.data || []);
 
+      setFetchError(null);
     } catch (error) {
       console.error('Error fetching data', error);
+      setFetchError(error.message || String(error));
       setIsLive(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
+    let isMounted = true;
+    let timer;
+    const pollData = async () => {
+      if (!isMounted) return;
+      await fetchData();
+      if (isMounted) {
+        timer = setTimeout(pollData, 2000);
+      }
+    };
+    pollData();
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
     if (activeMainTab === 'analysis') {
       const fetchAnalysis = async () => {
-        try {
-          const predRes = await api.get('/predict/BTCUSDT');
-          setPrediction(predRes.data);
-          setPredError(null);
-        } catch (error) {
-          setPredError(error.response?.data?.detail || "Prediction unavailable");
-        }
+        await handlePredictNow();
 
         try {
           const goldRes = await api.get('/gold/metrics/BTCUSDT', { params: { hours: 24 } });
@@ -128,15 +150,19 @@ function App() {
 
   // Prepare data for Whale/Anomaly Radar
   const anomalyChartData = React.useMemo(() => {
-    return anomalies.map(a => ({
-      time: new Date(a.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}),
-      rawTime: new Date(a.timestamp).getTime(),
-      severityLevel: a.severity === 'high' ? 3 : a.severity === 'medium' ? 2 : 1,
-      value: Math.abs(a.value || 0),
-      type: a.event_type,
-      description: a.description,
-      severity: a.severity
-    })).sort((a, b) => a.rawTime - b.rawTime);
+    return anomalies.map(a => {
+      const cleanDate = a.detected_at ? a.detected_at.replace(/(\.\d{3})\d+Z$/, '$1Z') : '';
+      const dt = new Date(cleanDate);
+      return {
+        time: dt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}),
+        rawTime: dt.getTime(),
+        severityLevel: a.severity === 'high' ? 3 : a.severity === 'medium' ? 2 : 1,
+        value: Math.abs(a.value || 0),
+        type: a.event_type,
+        description: a.description,
+        severity: a.severity
+      };
+    }).sort((a, b) => a.rawTime - b.rawTime);
   }, [anomalies]);
 
   return (
@@ -154,7 +180,8 @@ function App() {
           <button className={`main-tab ${activeMainTab === 'analysis' ? 'active' : ''}`} onClick={() => setActiveMainTab('analysis')}>Analysis</button>
         </div>
 
-        <div className="navbar-status" style={{flex: 1, justifyContent: 'flex-end'}}>
+        <div className="navbar-status" style={{flex: 1, justifyContent: 'flex-end', display: 'flex', alignItems: 'center', gap: '8px'}}>
+          {fetchError && <span style={{color: 'red', fontSize: '0.8rem', marginRight: '10px'}}>{fetchError}</span>}
           BTC/USDT
           <span className={`status-dot ${isLive ? 'status-live' : 'status-offline'}`}></span>
           {isLive ? 'CONNECTED' : 'DISCONNECTED'}
@@ -228,7 +255,9 @@ function App() {
                       <div key={i} style={{fontSize: '0.8rem', marginBottom: '12px', borderBottom: '1px solid var(--border-highlight)', paddingBottom: '8px'}}>
                         <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '4px'}}>
                           <span style={{color: a.severity === 'high' ? 'var(--color-down)' : '#fcd535', fontWeight: 'bold'}}>{a.event_type.toUpperCase()}</span>
-                          <span style={{color: 'var(--text-secondary)'}}>{new Date(a.timestamp).toLocaleTimeString()}</span>
+                          <span style={{color: 'var(--text-secondary)'}}>
+                            {a.detected_at ? new Date(a.detected_at.replace(/(\.\d{3})\d+Z$/, '$1Z')).toLocaleTimeString() : ''}
+                          </span>
                         </div>
                         <div style={{color: 'var(--text-primary)'}}>
                           {a.description}
@@ -368,7 +397,26 @@ function App() {
 
           <div className="analysis-grid">
             <div className="prediction-card">
-              <h3 style={{borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>🤖 AI LSTM Prediction</h3>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>
+                <h3 style={{margin: 0}}>🤖 AI LSTM Prediction</h3>
+                <button 
+                  onClick={handlePredictNow} 
+                  disabled={isPredicting}
+                  style={{
+                    padding: '4px 12px',
+                    backgroundColor: 'var(--color-brand)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: isPredicting ? 'wait' : 'pointer',
+                    opacity: isPredicting ? 0.7 : 1,
+                    fontSize: '0.85rem',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {isPredicting ? 'Predicting...' : 'Predict Now'}
+                </button>
+              </div>
               {predError ? (
                 <div style={{color: 'var(--color-down)'}}>{predError}</div>
               ) : prediction ? (

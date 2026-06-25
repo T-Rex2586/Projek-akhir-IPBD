@@ -1,0 +1,15 @@
+FROM apache/airflow:2.8.1
+
+USER root
+# Install required system packages for psycopg2 and others if needed
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+         build-essential \
+         libpq-dev \
+  && apt-get autoremove -yqq --purge \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+COPY requirements.txt /requirements.txt
+RUN pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" -r /requirements.txt

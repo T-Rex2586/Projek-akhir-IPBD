@@ -3,7 +3,7 @@
 **Production-ready real-time Bitcoin analytics dashboard** dengan WebSocket streaming, sentiment analysis, dan anomaly detection.
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io/)
+[![React](https://img.shields.io/badge/React-18.x-blue.svg)](https://reactjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -40,7 +40,7 @@
 - **Real-time Streaming**: Binance WebSocket for live data
 - **Silver Layer**: PostgreSQL for time-series data
 - **API**: FastAPI with OpenAPI docs
-- **Dashboard**: Streamlit with 1s refresh
+- **Dashboard**: React SPA with 1s refresh
 - **Alerts**: Telegram notifications
 
 ## 🚀 Quick Start
@@ -79,8 +79,10 @@ python start_production.py
 
 4. **Launch Dashboard**
 ```bash
-streamlit run dashboard/app.py
-# Open: http://localhost:8501
+cd dashboard
+npm install
+npm run dev
+# Open: http://localhost:5173
 ```
 
 ## 📊 Dashboard
@@ -101,8 +103,8 @@ All data updates every 1 second for true real-time experience!
 bitcoin-analytics/
 ├── api/                    # FastAPI REST API
 │   └── main.py
-├── dashboard/              # Streamlit dashboard
-│   └── app.py
+├── dashboard/              # React dashboard
+│   └── src/                # UI Components
 ├── ingestion/              # Data ingestion
 │   ├── binance_websocket.py  # Real-time WebSocket
 │   └── rss_batch.py          # News scraping
@@ -196,7 +198,7 @@ python start_production.py
 docker-compose up -d
 python ingestion/binance_websocket.py  # Terminal 1
 python api/main.py                     # Terminal 2
-streamlit run dashboard/app.py         # Terminal 3
+cd dashboard && npm run dev    # Terminal 3
 python start_telegram_bot.py           # Terminal 4 (Optional)
 ```
 
@@ -268,7 +270,7 @@ MIT License - see [LICENSE](LICENSE) file.
 ## 🙏 Acknowledgments
 
 - [Binance API](https://binance-docs.github.io/apidocs/)
-- [Streamlit](https://streamlit.io/)
+- [React](https://reactjs.org/)
 - [FastAPI](https://fastapi.tiangolo.com/)
 
 ---

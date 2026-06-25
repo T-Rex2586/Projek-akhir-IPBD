@@ -1,9 +1,7 @@
 """
-Database models for PostgreSQL using SQLAlchemy.
-
-Uses a singleton engine + session factory to avoid creating
-a new engine on every call. Includes connection retry logic
-for resilience during container startup.
+Definisi model objek-relasional (ORM) basis data menggunakan SQLAlchemy.
+Modul ini mencakup desain skema untuk data harga, sentimen berita, anomali, serta
+metrik konsolidasi Lapisan Emas.
 """
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
@@ -19,9 +17,8 @@ load_dotenv()
 
 Base = declarative_base()
 
-
 class PriceData(Base):
-    """Store cryptocurrency price data."""
+    """Entitas penyimpanan rekaman harga mata uang kripto."""
     __tablename__ = 'price_data'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -39,7 +36,7 @@ class PriceData(Base):
 
 
 class KlineData(Base):
-    """Store candlestick/kline data."""
+    """Entitas penyimpanan data kandil (Open-High-Low-Close-Volume)."""
     __tablename__ = 'kline_data'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -58,7 +55,7 @@ class KlineData(Base):
 
 
 class NewsArticle(Base):
-    """Store news articles from RSS feeds."""
+    """Entitas penyimpanan artikel berita beserta skor komputasi sentimen."""
     __tablename__ = 'news_articles'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -76,7 +73,7 @@ class NewsArticle(Base):
 
 
 class AnomalyEvent(Base):
-    """Store detected anomalies."""
+    """Entitas penyimpanan log kejadian anomali spesifik."""
     __tablename__ = 'anomaly_events'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -94,7 +91,7 @@ class AnomalyEvent(Base):
 
 
 class PipelineMetadata(Base):
-    """Store pipeline run metadata."""
+    """Entitas penyimpanan metadata operasional subsistem pemrosesan."""
     __tablename__ = 'pipeline_metadata'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -113,8 +110,8 @@ class PipelineMetadata(Base):
 
 class GoldHourlyMetrics(Base):
     """
-    Store highly-aggregated, refined business-level metrics (Gold Layer).
-    Combines price analytics, sentiment scores, and anomaly counts into 1-hour windows.
+    Entitas agregasi Lapisan Emas yang mengakumulasikan seluruh data operasional
+    ke dalam interval observasi spesifik (per jam).
     """
     __tablename__ = 'gold_hourly_metrics'
 
@@ -137,14 +134,12 @@ class GoldHourlyMetrics(Base):
         return f"<GoldHourlyMetrics({self.symbol}, {self.window_start}, avg=${self.avg_price:.2f})>"
 
 
-# ── Singleton engine & session factory ──────────────────────────────
-
 _engine = None
 _SessionFactory = None
 
 
 def get_db_url() -> str:
-    """Build the database URL from environment variables."""
+    """Mengonstruksi Universal Resource Locator (URL) koneksi basis data."""
     user = os.getenv('DB_USER', 'postgres')
     password = os.getenv('DB_PASSWORD', 'postgres')
     host = os.getenv('DB_HOST', 'localhost')
@@ -154,10 +149,7 @@ def get_db_url() -> str:
 
 
 def get_db_engine(max_retries: int = 5, retry_delay: float = 3.0):
-    """Return the singleton database engine (created once, reused).
-
-    Retries connection on failure to handle container startup delays.
-    """
+    """Menginisialisasi mesin pengelola koneksi SQLAlchemy dengan mekanisme repetisi cerdas."""
     global _engine
     if _engine is None:
         url = get_db_url()
@@ -168,9 +160,8 @@ def get_db_engine(max_retries: int = 5, retry_delay: float = 3.0):
                     echo=False,
                     pool_size=5,
                     max_overflow=10,
-                    pool_pre_ping=True,  # auto-reconnect on stale connections
+                    pool_pre_ping=True,
                 )
-                # Test the connection
                 from sqlalchemy import text as sa_text
                 with _engine.connect() as conn:
                     conn.execute(sa_text('SELECT 1'))
@@ -178,33 +169,20 @@ def get_db_engine(max_retries: int = 5, retry_delay: float = 3.0):
             except Exception as e:
                 if attempt == max_retries:
                     raise
-                print(f"DB connection attempt {attempt}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+                print(f"Koneksi DB ke-{attempt}/{max_retries} gagal: {e}. Mengulangi dalam {retry_delay}s...")
                 time.sleep(retry_delay)
     return _engine
 
 
 def init_db():
-    """Initialize database tables."""
+    """Melakukan instansiasi skema tabel secara komprehensif pada basis data."""
     engine = get_db_engine()
     Base.metadata.create_all(engine)
     return engine
 
 
 def get_session():
-    """
-    Get a database session from the shared session factory.
-
-    Usage:
-        session = get_session()
-        try:
-            ...
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-    """
+    """Menyediakan sesi transaksi terisolasi untuk berinteraksi dengan basis data."""
     global _SessionFactory
     if _SessionFactory is None:
         engine = get_db_engine()

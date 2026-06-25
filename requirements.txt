@@ -4,6 +4,7 @@ websockets
 feedparser
 pandas
 numpy
+pytz
 
 # Big Data
 pyspark
@@ -20,8 +21,6 @@ keras
 fastapi
 uvicorn[standard]
 python-multipart
-streamlit
-plotly
 
 # Database & Storage
 sqlalchemy

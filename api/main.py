@@ -1,13 +1,6 @@
 """
-FastAPI serving layer for the crypto pipeline.
-
-Features:
-- RESTful API with versioned endpoints
-- API Key authentication
-- CORS middleware with configurable origins
-- Request logging middleware
-- Global exception handler
-- OpenAPI documentation with tags
+Lapisan layanan (serving layer) FastAPI untuk alur kerja data kripto.
+Menyediakan REST API untuk pemantauan harga seketika, analisis sentimen, dan deteksi anomali.
 """
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +10,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import time
 import traceback
 from dotenv import load_dotenv
@@ -30,10 +25,7 @@ from storage.db_models import get_session, NewsArticle, KlineData
 from monitoring.logger import get_logger
 
 load_dotenv()
-
 logger = get_logger(__name__)
-
-# ── App Configuration ────────────────────────────────────────────────
 
 API_VERSION = "2.1.0"
 ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
@@ -41,8 +33,7 @@ ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup and shutdown lifecycle."""
-    # Startup
+    """Mengelola siklus hidup inisialisasi dan terminasi aplikasi."""
     logger.info("api_server_starting", version=API_VERSION)
     try:
         session = get_session()
@@ -51,39 +42,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("database_connection_check_failed", error=str(e))
     yield
-    # Shutdown
     logger.info("api_server_shutting_down")
 
 
 app = FastAPI(
-    title="Crypto Sentiment & Price Analytics API",
+    title="API Analitik Harga & Sentimen Kripto",
     description=(
-        "REST API for real-time cryptocurrency price monitoring, "
-        "sentiment analysis, and anomaly detection.\n\n"
-        "**Architecture**: Medallion (Bronze → Silver → Gold)\n\n"
-        "**Data Sources**: Binance (public), RSS feeds (7 crypto news sources)"
+        "REST API terpadu untuk pemantauan harga mata uang kripto waktu nyata, "
+        "analisis sentimen pemberitaan, dan sistem deteksi anomali terdistribusi.\n\n"
+        "**Arsitektur**: Medallion (Perunggu → Perak → Emas)\n\n"
+        "**Sumber Data**: API Publik Binance, Sindikasi RSS Berita Kripto"
     ),
     version=API_VERSION,
-    contact={
-        "name": "Crypto Pipeline Team",
-        "url": "https://github.com/your-username/crypto-pipeline",
-    },
-    license_info={
-        "name": "MIT License",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
 
-# ── Middleware ────────────────────────────────────────────────────────
-
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -91,12 +70,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log request method, path, and response time."""
+    """Mencatat metrik dan durasi setiap permintaan HTTP (kecuali /health)."""
     start = time.time()
     response = await call_next(request)
     duration_ms = (time.time() - start) * 1000
 
-    # Skip logging for health checks to reduce noise
     if request.url.path != "/health":
         logger.info(
             "http_request",
@@ -109,23 +87,18 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-# ── Authentication ───────────────────────────────────────────────────
-
 API_KEY = os.getenv("API_KEY", "dev-api-key")
 
-
 def verify_api_key(x_api_key: str = Header(...)):
-    """Verify API key from header."""
+    """Memverifikasi validitas kunci API yang diberikan dalam tajuk permintaan."""
     if x_api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid API key")
+        raise HTTPException(status_code=403, detail="Kunci API tidak valid")
     return x_api_key
 
 
-# ── Exception Handler ────────────────────────────────────────────────
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Catch unhandled exceptions and return a structured error response."""
+    """Menangani kesalahan yang tidak tertangkap secara global dan merekam jejak kegagalan."""
     logger.error(
         "unhandled_api_exception",
         path=str(request.url),
@@ -135,18 +108,15 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": "Kesalahan server internal"},
     )
 
-
-# ── Response Models ──────────────────────────────────────────────────
 
 class PriceResponse(BaseModel):
     symbol: str
     price: float
     volume: Optional[float] = None
     timestamp: datetime
-
 
 class AnomalyResponse(BaseModel):
     event_type: str
@@ -155,7 +125,6 @@ class AnomalyResponse(BaseModel):
     severity: str
     detected_at: datetime
 
-
 class NewsResponse(BaseModel):
     title: str
     source: str
@@ -163,7 +132,6 @@ class NewsResponse(BaseModel):
     sentiment_score: Optional[float] = None
     sentiment_label: Optional[str] = None
     url: str
-
 
 class GoldMetricsResponse(BaseModel):
     window_start: datetime
@@ -175,7 +143,6 @@ class GoldMetricsResponse(BaseModel):
     sentiment_signal_count: int
     anomaly_event_count: int
 
-
 class PipelineStatusResponse(BaseModel):
     status: str
     timestamp: datetime
@@ -184,20 +151,12 @@ class PipelineStatusResponse(BaseModel):
     components: dict
 
 
-# ── Endpoints ────────────────────────────────────────────────────────
-
-@app.get("/", tags=["General"])
+@app.get("/", tags=["Sistem Utama"])
 def root():
-    """Root endpoint — API information and available routes."""
+    """Mengembalikan informasi arsitektur dasar dan indeks rute yang tersedia."""
     return {
-        "message": "Crypto Sentiment & Price Analytics API",
+        "message": "API Analitik Harga & Sentimen Kripto",
         "version": API_VERSION,
-        "data_sources": {
-            "binance": "Public API (no key)",
-            "news": "RSS feeds (7 sources)",
-        },
-        "architecture": "Medallion (Bronze → Silver → Gold)",
-        "alerts": "Telegram Bot",
         "docs": "/docs",
         "endpoints": [
             "/health",
@@ -211,30 +170,24 @@ def root():
     }
 
 
-@app.get("/health", tags=["General"])
+@app.get("/health", tags=["Sistem Utama"])
 def health_check():
-    """Health check with pipeline metrics — no authentication required."""
+    """Menguji status vital sistem dan menyajikan metrik internal."""
     from monitoring.logger import metrics as pipeline_metrics
     return {
-        "status": "healthy",
+        "status": "sehat",
         "version": API_VERSION,
         "timestamp": datetime.utcnow(),
         "pipeline_metrics": pipeline_metrics.get_metrics(),
     }
 
 
-@app.get("/prices/{symbol}", response_model=List[PriceResponse], tags=["Market Data"])
-def get_prices(
-    symbol: str,
-    hours: int = 24,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get recent price data for a cryptocurrency symbol."""
+@app.get("/prices/{symbol}", response_model=List[PriceResponse], tags=["Data Pasar"])
+def get_prices(symbol: str, hours: int = 24, api_key: str = Depends(verify_api_key)):
+    """Menyajikan rekaman historis data harga dalam rentang waktu tertentu."""
     try:
-        # First try to get data from PriceData table
         prices = get_recent_prices(symbol.upper(), hours=hours)
         
-        # If no data in PriceData, fallback to KlineData (WebSocket data)
         if not prices:
             session = get_session()
             try:
@@ -244,12 +197,11 @@ def get_prices(
                     KlineData.close_time >= since
                 ).order_by(KlineData.close_time.asc()).all()
                 
-                # Convert kline data to price format (timestamps in UTC)
                 prices = [{
                     'symbol': k.symbol,
                     'price': k.close_price,
                     'volume': k.volume,
-                    'timestamp': k.close_time  # Keep as UTC, dashboard will convert
+                    'timestamp': k.close_time
                 } for k in klines]
                 
                 logger.info("prices_from_klines", symbol=symbol, count=len(prices))
@@ -266,12 +218,9 @@ def get_prices(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/anomalies", response_model=List[AnomalyResponse], tags=["Analytics"])
-def get_anomalies(
-    hours: int = 24,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get recent anomaly events detected by the pipeline."""
+@app.get("/anomalies", response_model=List[AnomalyResponse], tags=["Analitik"])
+def get_anomalies(hours: int = 24, api_key: str = Depends(verify_api_key)):
+    """Mengembalikan daftar kejadian anomali yang terdeteksi oleh sistem."""
     try:
         anomalies = get_recent_anomalies(hours=hours)
         logger.info("anomalies_fetched", count=len(anomalies))
@@ -281,13 +230,9 @@ def get_anomalies(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/news/topics", tags=["Sentiment"])
-def get_news_topics(
-    hours: int = 24,
-    limit: int = 15,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get narrative topic map based on recent news articles."""
+@app.get("/news/topics", tags=["Sentimen"])
+def get_news_topics(hours: int = 24, limit: int = 15, api_key: str = Depends(verify_api_key)):
+    """Mengidentifikasi topik wacana naratif dominan dari pemberitaan terkini."""
     try:
         from ml.nlp.topic_extractor import extract_topics
         topics = extract_topics(hours=hours, top_n=limit)
@@ -297,12 +242,9 @@ def get_news_topics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/news", response_model=List[NewsResponse], tags=["Sentiment"])
-def get_news(
-    limit: int = 50,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get recent news articles with sentiment scores."""
+@app.get("/news", response_model=List[NewsResponse], tags=["Sentimen"])
+def get_news(limit: int = 50, api_key: str = Depends(verify_api_key)):
+    """Mengembalikan rincian artikel berita beserta skor komputasi sentimennya."""
     session = get_session()
     try:
         articles = session.query(NewsArticle).order_by(
@@ -328,20 +270,15 @@ def get_news(
         session.close()
 
 
-@app.get("/klines/{symbol}", tags=["Market Data"])
-def get_klines(
-    symbol: str,
-    limit: int = 100,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get candlestick/kline OHLCV data for charting."""
+@app.get("/klines/{symbol}", tags=["Data Pasar"])
+def get_klines(symbol: str, limit: int = 100, api_key: str = Depends(verify_api_key)):
+    """Menyajikan representasi data kandil (kline OHLCV) bagi instrumen visualisasi."""
     session = get_session()
     try:
         klines = session.query(KlineData).filter(
             KlineData.symbol == symbol.upper()
         ).order_by(KlineData.close_time.desc()).limit(limit).all()
 
-        # Return timestamps in UTC, dashboard will convert to WIB
         result = [{
             "symbol": k.symbol,
             "open": k.open_price,
@@ -363,13 +300,9 @@ def get_klines(
         session.close()
 
 
-@app.get("/gold/metrics/{symbol}", response_model=List[GoldMetricsResponse], tags=["Analytics"])
-def get_gold_metrics(
-    symbol: str,
-    hours: int = 24,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get Gold Layer aggregated business metrics (hourly windows)."""
+@app.get("/gold/metrics/{symbol}", response_model=List[GoldMetricsResponse], tags=["Analitik"])
+def get_gold_metrics(symbol: str, hours: int = 24, api_key: str = Depends(verify_api_key)):
+    """Mengekstraksi metrik agregat lapisan Emas dalam blok waktu per jam."""
     try:
         metrics_list = get_gold_hourly_metrics(symbol.upper(), hours=hours)
         logger.info("gold_metrics_fetched", symbol=symbol, count=len(metrics_list))
@@ -379,12 +312,9 @@ def get_gold_metrics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/analytics/divergence/{symbol}", tags=["Analytics"])
-def get_divergence_gauge(
-    symbol: str,
-    api_key: str = Depends(verify_api_key)
-):
-    """Calculate sentiment-price divergence gauge."""
+@app.get("/analytics/divergence/{symbol}", tags=["Analitik"])
+def get_divergence_gauge(symbol: str, api_key: str = Depends(verify_api_key)):
+    """Mengkalkulasi divergensi kuantitatif antara tren sentimen dan perilaku harga aset."""
     try:
         metrics_list = get_gold_hourly_metrics(symbol.upper(), hours=24)
         if len(metrics_list) < 2:
@@ -397,7 +327,6 @@ def get_divergence_gauge(
             return {"symbol": symbol, "divergence": 0.0, "status": "neutral", "price_z": 0.0, "sentiment_z": 0.0}
             
         import numpy as np
-        # Calculate z-scores for the latest hour
         price_mean, price_std = np.mean(prices), np.std(prices)
         sent_mean, sent_std = np.mean(sentiments), np.std(sentiments)
         
@@ -407,14 +336,16 @@ def get_divergence_gauge(
         price_z = (latest_price - price_mean) / price_std if price_std > 0 else 0
         sent_z = (latest_sent - sent_mean) / sent_std if sent_std > 0 else 0
         
-        divergence = price_z - sent_z
+        # Calculate divergence as sentiment relative to price
+        # Positive divergence: Sentiment is better than price (Undervalued / Bullish)
+        # Negative divergence: Sentiment is worse than price (Overvalued / Bearish)
+        divergence = sent_z - price_z
         
-        # Determine status
         status = "neutral"
         if divergence > 1.5:
-            status = "bearish_divergence" # Price way up, sentiment way down
+            status = "bullish_divergence"
         elif divergence < -1.5:
-            status = "bullish_divergence" # Price way down, sentiment way up
+            status = "bearish_divergence"
             
         return {
             "symbol": symbol,
@@ -430,14 +361,11 @@ def get_divergence_gauge(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/pipeline/status", tags=["Monitoring"])
-def get_pipeline_status(
-    api_key: str = Depends(verify_api_key)
-):
-    """Get overall pipeline component status and health."""
+@app.get("/pipeline/status", tags=["Pemantauan"])
+def get_pipeline_status(api_key: str = Depends(verify_api_key)):
+    """Memberikan ikhtisar komprehensif mengenai kesehatan seluruh komponen infrastruktur."""
     from monitoring.logger import metrics as pipeline_metrics
 
-    # Test database connectivity
     db_status = "unknown"
     try:
         from sqlalchemy import text
@@ -448,7 +376,6 @@ def get_pipeline_status(
     except Exception:
         db_status = "disconnected"
 
-    # Test MinIO connectivity
     minio_status = "unknown"
     try:
         from storage.minio_utils import get_minio_client
@@ -458,7 +385,6 @@ def get_pipeline_status(
     except Exception:
         minio_status = "disconnected"
 
-    # Telegram alert stats
     telegram_stats = {}
     try:
         from monitoring.telegram_alert import get_alert_stats
@@ -481,41 +407,31 @@ def get_pipeline_status(
     }
 
 
-@app.get("/predict/{symbol}", tags=["ML Predictions"])
-def get_lstm_prediction(
-    symbol: str,
-    api_key: str = Depends(verify_api_key)
-):
+@app.get("/predict/{symbol}", tags=["Prediksi ML"])
+def get_lstm_prediction(symbol: str, api_key: str = Depends(verify_api_key)):
     """
-    Get LSTM price prediction and trading signal.
-    
-    Returns predicted price, signal (BUY/HOLD/SELL), and confidence score.
-    Requires trained LSTM model for the symbol.
+    Menjalankan inferensi pada model LSTM dan mengembalikan estimasi harga serta sinyal perdagangan.
     """
     try:
         from ml.inference.lstm_inference import fetch_recent_data
         from ml.models.lstm_price_predictor import LSTMPricePredictor
         
-        # Initialize predictor
         predictor = LSTMPricePredictor(symbol=symbol)
         
-        # Load model
         if not predictor.load_model():
             raise HTTPException(
                 status_code=404,
-                detail=f"No trained model found for {symbol}. Train model first using: python ml/training/train_lstm_model.py --symbol {symbol}"
+                detail=f"Model tidak ditemukan untuk {symbol}. Lakukan pelatihan model terlebih dahulu."
             )
         
-        # Fetch recent data
         df = fetch_recent_data(symbol, hours=6)
         
         if df.empty or len(df) < predictor.lookback_window:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient data for prediction. Need at least {predictor.lookback_window} records."
+                detail=f"Volume data tidak memadai. Minimal {predictor.lookback_window} rekaman historis dibutuhkan."
             )
         
-        # Make prediction
         prediction = predictor.predict_next(df)
         
         if 'error' in prediction:

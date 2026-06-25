@@ -1,257 +1,140 @@
-# 🚀 Cara Menjalankan Bitcoin Analytics Pipeline
+# Cara Menjalankan Proyek secara Lengkap (Lokal / PC)
 
-Pipeline real-time untuk analisis Bitcoin dengan WebSocket, sentiment analysis, dan dashboard interaktif.
+Panduan ini ditujukan bagi Anda yang ingin menjalankan **PRO_TERMINAL Crypto Pipeline** di komputer lokal (Windows/Mac/Linux) untuk keperluan *development* atau presentasi (sidang).
 
----
-
-## 📋 Kebutuhan Sistem
-
-```bash
-# Python packages
-pip install -r requirements.txt
-
-# Docker untuk services
-docker --version
-docker-compose --version
-```
+Jika Anda ingin mendeploy ke server produksi/VPS yang berjalan 24/7, silakan ikuti panduan di `DEPLOY_VPS.md`.
 
 ---
 
-## ⚡ Quick Start (Real-time Mode)
-
-### 1. Setup Environment
-```bash
-# Copy dan edit environment
-cp .env.example .env
-
-# Edit .env file - WAJIB isi:
-# TELEGRAM_BOT_TOKEN=bot_token_dari_botfather
-# TELEGRAM_CHAT_ID=chat_id_anda
-```
-
-**Setup Telegram Bot (Untuk Alerts & Commands):**
-1. Buka Telegram, cari @BotFather
-2. Kirim `/newbot` dan ikuti instruksi
-3. Copy bot token yang diberikan
-4. Cari @userinfobot, kirim pesan untuk dapat chat ID
-5. Masukkan ke file `.env`
-
-### 2. Start Infrastructure
-```bash
-# Start PostgreSQL, Kafka, MinIO
-docker-compose up -d
-
-# Wait for services to be ready (30 seconds)
-```
-
-### 3. Initialize Database
-```bash
-# Create tables
-python -c "from storage.db_models import init_db; init_db()"
-```
-
-### 4. Start Real-time Data Ingestion
-```bash
-# Terminal 1: WebSocket real-time data (WAJIB untuk dashboard)
-python ingestion/binance_websocket.py
-# Biarkan berjalan terus - ini sumber data real-time Bitcoin
-
-# Terminal 2: API Server (WAJIB untuk dashboard)  
-python -m api.main
-# API akan berjalan di http://localhost:8001
-```
-
-### 5. Start Dashboard (Real-time React UI)
-```bash
-# Terminal 3: Dashboard real-time (React Vite)
-cd dashboard
-npm run dev
-# Dashboard: http://localhost:5173
-# Data akan refresh otomatis!
-```
-
-### 6. Start Telegram Bot (OPSIONAL tapi RECOMMENDED!)
-```bash
-# Terminal 4: Telegram Bot untuk commands
-python start_telegram_bot.py
-# Bot akan listen untuk commands:
-# /predict - AI trading signal (BUY/SELL/HOLD)
-# /status - System status
-# /help - Daftar commands
-```
+## 1. Persiapan Kebutuhan Sistem (Prerequisites)
+Pastikan aplikasi berikut sudah terinstal di komputer Anda:
+1. **Python 3.10+**
+2. **Node.js** (Minimal versi 18.x)
+3. **Docker Desktop** (untuk Windows/Mac) atau **Docker Engine & Docker Compose** (untuk Linux)
+4. **Git**
 
 ---
 
-## 📊 Dashboard Features
+## 2. Persiapan Environment
+Semua kunci rahasia disimpan di file `.env`.
 
-- **Real-time refresh**: 1 detik 
-- **Bitcoin focused**: BTCUSDT only
-- **Fixed timeframe**: Always 24 hours data
-- **Live charts**: Price, volume, candlestick (WIB timezone)
-- **Timezone**: WIB Indonesia (sudah fix!)
-- **Clickable news links**: Link langsung ke artikel
-- **Anomaly detection**: Real-time alerts
-- **No distractions**: Full-width, no sidebar!
-
-## 🤖 Telegram Bot Features
-
-**Commands yang bisa digunakan:**
-- `/predict` atau `/predict BTCUSDT` - Dapatkan sinyal trading AI (BUY/SELL/HOLD)
-- `/status` - Status sistem dan statistik
-- `/help` - Daftar semua commands
-
-**Auto-Alerts (otomatis kirim ke Telegram):**
-- 🟢 Berita positif (sentiment > 0.5)
-- 🔴 Berita negatif (sentiment < -0.5)
-- 💹 Price spike alerts
-- 📊 Volume surge alerts
-- 🚨 Anomaly detections
+1. Duplikat file `.env.example` dan ubah namanya menjadi `.env`.
+  ```bash
+  cp .env.example .env
+  ```
+2. Buka file `.env` dan isi token Telegram Anda (wajib untuk fitur Alert & Chatbot):
+  ```ini
+  TELEGRAM_BOT_TOKEN="123456789:ABCDefghIJKLmnopQRSTuvwxyz"
+  TELEGRAM_CHAT_ID="ID_TELEGRAM_ANDA"
+  ADMIN_TELEGRAM_CHAT_ID="ID_TELEGRAM_ANDA" # Untuk notif error Airflow
+  ```
 
 ---
 
-## 🔧 Components Optional
+## 3. Menjalankan Infrastruktur Data (Docker)
+Proyek ini mengandalkan beberapa *service* (PostgreSQL, Kafka, Zookeeper, MinIO, MongoDB, dan Grafana).
 
-### News Scraping (Opsional)
-```bash
-# Manual news fetch
-python ingestion/rss_batch.py
-
-# Atau setup cron job untuk otomatis setiap jam
-```
-
-### ML Training (Opsional)
-```bash
-# Train LSTM model untuk prediksi harga
-python ml/training/train_lstm_model.py --symbol BTCUSDT --days 7 --epochs 50
-
-# Get predictions
-python ml/inference/lstm_inference.py --symbol BTCUSDT
-```
+1. Buka terminal/Command Prompt di root folder proyek Anda.
+2. Jalankan perintah berikut untuk mengunduh dan menyalakan semua kontainer:
+  ```bash
+  docker-compose up -d
+  ```
+3. Pastikan semuanya berjalan tanpa *error* dengan mengecek statusnya:
+  ```bash
+  docker-compose ps
+  ```
 
 ---
 
-## 🚨 Troubleshooting
+## 4. Setup Python Environment & Database
+Kita perlu menginstal semua library Python dan membuat kerangka tabel di database.
 
-### Dashboard Tidak Menampilkan Data
-```bash
-# 1. Cek WebSocket berjalan
-# Pastikan terminal python ingestion/binance_websocket.py masih aktif
-# Harus ada output: "kline_received" setiap menit
-
-# 2. Cek API server
-curl http://localhost:8001/health
-
-# 3. Test data flow
-python test_realtime_flow.py
-
-# 4. Reset database jika perlu
-python reset_database.py
-```
-
-### Timezone Tidak Sesuai
-- Timestamp sudah dalam format yang benar
-- Tidak perlu konversi manual
-- Dashboard akan display sesuai data dari API
-
-### Data Tidak Real-time
-- Pastikan `python ingestion/binance_websocket.py` aktif
-- Dashboard refresh 1 detik otomatis
-- Jangan pause atau close browser tab
-
-### Binance API Timeout
-```bash
-# Gunakan VPN jika ISP block Binance
-# Atau ganti network (hotspot HP, WiFi lain)
-# Script sudah ada fallback ke multiple endpoints
-```
-
-### API Server Error: `[winerror 10048]`
-```bash
-# Error ini terjadi karena server API lama masih berjalan di port 8001
-# Buka PowerShell sebagai Administrator dan jalankan:
-Stop-Process -Id (Get-NetTCPConnection -LocalPort 8001).OwningProcess -Force
-# Setelah itu jalankan kembali: python -m api.main
-```
-
-### Layar Dashboard Kosong / Hitam
-- Pastikan Anda menggunakan API versi terbaru
-- Refresh browser (Tekan F5)
-- Pastikan script agregator (`python processing/gold_processor.py`) sudah berjalan setidaknya satu kali agar tabel agregasi terbentuk.
+1. Buat Virtual Environment:
+  ```bash
+  python -m venv venv
+  ```
+2. Aktifkan Virtual Environment:
+  - **Windows**: `venv\Scripts\activate`
+  - **Mac/Linux**: `source venv/bin/activate`
+3. Install Library/Dependencies:
+  ```bash
+  pip install -r requirements.txt
+  ```
+4. Inisialisasi Tabel Database:
+  ```bash
+  python -c "from storage.db_models import init_db; init_db()"
+  ```
 
 ---
 
-## 📋 Urutan Operasional Harian
+## 5. Menjalankan Pipeline Python
+Anda dapat menjalankan komponen utama secara terpusat menggunakan skrip otomatis yang telah disediakan.
 
-```bash
-# 1. Start services (Database, Kafka, MinIO)
-docker-compose up -d
+1. Buka terminal (pastikan virtual environment `venv` sudah aktif).
+2. Eksekusi skrip produksi utama:
+  ```bash
+  python scripts/start_production.py
+  ```
+  *(Skrip ini akan mengecek Docker, menginisialisasi database, dan secara otomatis membuka terminal/window baru untuk menjalankan API Server dan WebSocket Binance).*
 
-# 2. Start data ingestion (WAJIB - jangan dimatikan)
-python ingestion/binance_websocket.py &
+3. (Opsional) Untuk mengaktifkan Bot Telegram, buka tab terminal baru (aktifkan `venv` lagi), lalu jalankan:
+  ```bash
+  python scripts/start_telegram_bot.py
+  ```
 
-# 3. Start API server (WAJIB untuk dashboard)  
-python -m api.main &
-
-# 4. Start dashboard
-cd dashboard
-npm run dev
-
-# 5. Start Aggregation & NLP Metrics (WAJIB untuk M3 / Divergence)
-# Script ini akan menghitung rata-rata harga dan ekstraksi topik setiap 1 jam
-python processing/gold_processor.py &
-
-# 6. Start Telegram Bot (RECOMMENDED!)
-python start_telegram_bot.py &
-
-# 7. Optional: News scraping dengan auto-alerts
-python ingestion/rss_batch.py --mode continuous
-```
+4. (Opsional) Untuk memproses Lapisan Emas (Gold Layer) yang mengakumulasi agregasi secara periodik, buka tab terminal baru dan jalankan:
+  ```bash
+  python processing/gold_processor.py
+  ```
 
 ---
 
-## 🌐 URLs
+## 6. Menjalankan Airflow (Batch Processing)
+Airflow digunakan untuk mengambil berita (news), memproses sentimennya, dan mengirim laporan ringkasan harian.
 
-- **Dashboard**: http://localhost:5173
-- **API Docs**: http://localhost:8001/docs  
-- **Health Check**: http://localhost:8001/health
-- **API Base**: http://localhost:8001
+Kini Airflow berjalan secara otomatis di dalam kontainer Docker bersama dengan infrastruktur data lainnya.
 
----
-
-## 💡 Tips
-
-- **Real-time**: WebSocket + API + Dashboard = refresh 1 detik
-- **Bitcoin only**: Fokus pada crypto #1
-- **Timezone**: Sudah fix di WIB untuk candlestick dan semua charts!
-- **News**: Link clickable langsung ke artikel + auto-alert ke Telegram
-- **Telegram Bot**: Minta prediksi kapan saja dengan `/predict`
-- **Performance**: Optimized untuk 1-detik refresh
-
-## 🤖 Telegram Bot Tips
-
-**Cara pakai:**
-1. Pastikan bot sudah jalan: `python start_telegram_bot.py`
-2. Buka Telegram, cari bot anda
-3. Kirim `/help` untuk daftar commands
-4. Kirim `/predict` untuk sinyal trading
-5. Bot akan auto-alert untuk berita penting!
-
-**Sinyal Trading:**
-- 🟢 BUY = Harga diprediksi naik
-- 🔴 SELL = Harga diprediksi turun  
-- 🟡 HOLD = Harga stabil
-
-⚠️ **Disclaimer**: Bukan financial advice - DYOR!
+1. Pastikan Anda telah menjalankan perintah `docker-compose up -d` (seperti pada Langkah 3).
+2. Airflow Webserver dapat diakses secara lokal melalui browser.
+3. Buka **http://localhost:8080**
+4. Login menggunakan *username*: `admin` dan *password*: `admin`.
+5. Cari DAG bernama `news_batch_pipeline` lalu aktifkan (toggle ke posisi *On*).
 
 ---
 
-## 📞 Detail Lengkap
+## 7. Menjalankan Dashboard (UI React)
+Dashboard berfungsi memvisualisasikan seluruh data yang ada di database.
 
-Untuk setup lengkap, ML training, dan troubleshooting detail:
-- **Main Documentation**: `README.md`
-
-Untuk bantuan: periksa logs di folder `logs/`
+1. Buka Terminal baru, arahkan ke folder `dashboard`:
+  ```bash
+  cd dashboard
+  ```
+2. Install library JavaScript:
+  ```bash
+  npm install
+  ```
+3. Jalankan server React:
+  ```bash
+  npm run dev
+  ```
+4. Buka browser Anda dan akses: **`http://localhost:5173`**
 
 ---
 
-**₿ Happy Bitcoin Monitoring! 🚀**
+## 8. Mengakses Grafana (Monitoring System)
+Grafana sudah diatur agar otomatis terhubung ke PostgreSQL.
+1. Buka browser dan masuk ke **`http://localhost:3000`**
+2. Login dengan kredensial:
+  - **Username**: `admin`
+  - **Password**: `admin`
+3. Masuk ke menu `Dashboards` -> `New Dashboard` untuk mulai membuat grafik memonitor performa server atau database.
+
+---
+
+## Cara Mematikan Sistem
+Jika Anda sudah selesai melakukan presentasi / pengetesan:
+1. Hentikan semua proses Python & React di terminal Anda dengan menekan **`Ctrl + C`**.
+2. Matikan kontainer infrastruktur Docker:
+  ```bash
+  docker-compose down
+  ```

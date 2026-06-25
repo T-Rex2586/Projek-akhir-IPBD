@@ -22,8 +22,7 @@ const DivergenceGauge = ({ symbol = 'BTCUSDT' }) => {
     return () => clearInterval(interval);
   }, [symbol]);
 
-  // For Gauge, we simulate a speedometer from -3 (Bearish) to +3 (Bullish)
-  // Recharts PieChart: 180 to 0 degrees
+  // Divergence > 0 is bullish (Green, Right), < 0 is bearish (Red, Left).
   const value = data ? Math.max(-3, Math.min(3, data.divergence)) : 0;
   // Map value [-3, 3] to angle [180, 0]
   const needleAngle = 180 - ((value + 3) / 6) * 180;
@@ -44,16 +43,20 @@ const DivergenceGauge = ({ symbol = 'BTCUSDT' }) => {
             <div style={{width: '200px', height: '120px'}}>
               <svg viewBox="0 0 200 120" style={{width: '100%', height: '100%'}}>
                 {/* Background arcs */}
-                <path d="M 20 100 A 80 80 0 0 1 80 30 L 100 100 Z" fill="var(--color-down)" opacity="0.7" />
-                <path d="M 80 30 A 80 80 0 0 1 120 30 L 100 100 Z" fill="#555" opacity="0.5" />
-                <path d="M 120 30 A 80 80 0 0 1 180 100 L 100 100 Z" fill="var(--color-up)" opacity="0.7" />
+                {/* Red arc (Bearish): from 180 deg to 135 deg (-3 to -1.5) */}
+                <path d="M 20 100 A 80 80 0 0 1 43.4 43.4 L 100 100 Z" fill="var(--color-down)" opacity="0.7" />
+                {/* Gray arc (Neutral): from 135 deg to 45 deg (-1.5 to 1.5) */}
+                <path d="M 43.4 43.4 A 80 80 0 0 1 156.6 43.4 L 100 100 Z" fill="#555" opacity="0.5" />
+                {/* Green arc (Bullish): from 45 deg to 0 deg (1.5 to 3) */}
+                <path d="M 156.6 43.4 A 80 80 0 0 1 180 100 L 100 100 Z" fill="var(--color-up)" opacity="0.7" />
                 
-                {/* Inner cutout */}
-                <path d="M 50 100 A 50 50 0 0 1 150 100 Z" fill="var(--bg-panel)" />
+                {/* Inner cutout - Fix the path so it accurately cuts out the center */}
+                <path d="M 40 100 A 60 60 0 0 1 160 100 Z" fill="var(--bg-panel)" />
 
-                {/* Needle */}
+                {/* Needle base point & Needle */}
+                <circle cx="100" cy="100" r="10" fill="#222" stroke="#444" strokeWidth="2" />
                 <line x1="100" y1="100" x2={needleX} y2={needleY} stroke="#fff" strokeWidth="3" />
-                <circle cx="100" cy="100" r="8" fill="#fff" />
+                <circle cx="100" cy="100" r="4" fill="#fff" />
               </svg>
             </div>
             <div style={{textAlign: 'center', marginTop: '16px'}}>

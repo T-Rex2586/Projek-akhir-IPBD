@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL Pipeline DB
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: airflow
+    database: airflow
+    secureJsonData:
+      password: airflow
+    jsonData:
+      sslmode: disable
+      postgresVersion: 15
+    isDefault: true
+    editable: true

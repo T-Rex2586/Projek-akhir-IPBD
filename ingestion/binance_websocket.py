@@ -1,10 +1,7 @@
 """
-Binance WebSocket streaming for real-time price data.
-
-Uses Binance public WebSocket API (no API key required).
-Streams kline (candlestick) data for configured symbols and stores
-closed candles to Silver layer (PostgreSQL) and raw data to Bronze (MinIO).
-Includes automatic reconnection with exponential backoff.
+Modul akuisisi data waktu nyata melalui antarmuka Binance WebSocket.
+Secara asinkron mengumpulkan data kandil (kline), mendeteksi anomali volume dan harga,
+serta menyimpan data tersebut pada lapisan penyimpanan yang sesuai.
 """
 import asyncio
 import json
@@ -16,7 +13,6 @@ import pytz
 from typing import Dict
 import websockets
 
-# Add project root to path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from monitoring.logger import get_logger, metrics
@@ -24,20 +20,16 @@ from storage.db_utils import save_kline_data
 from dotenv import load_dotenv
 
 load_dotenv()
-
 logger = get_logger(__name__)
 
-# Public endpoints — no API key required - BITCOIN ONLY
 SYMBOLS = ["btcusdt"]
 WS_BASE_URL = "wss://stream.binance.com:9443/ws"
 
-# Reconnection settings
-MAX_RECONNECT_DELAY = 120   # max seconds between reconnect attempts
-INITIAL_RECONNECT_DELAY = 2 # first reconnect delay
-
+MAX_RECONNECT_DELAY = 120
+INITIAL_RECONNECT_DELAY = 2
 
 class BinanceWebSocketClient:
-    """Client for Binance public WebSocket streams with auto-reconnect."""
+    """Klien terpusat untuk mengelola koneksi WebSocket dengan mekanisme pemulihan otomatis (auto-reconnect)."""
 
     def __init__(self, symbols: list = None):
         self.symbols = [s.lower() for s in (symbols or SYMBOLS)]
@@ -45,7 +37,7 @@ class BinanceWebSocketClient:
         logger.info("binance_websocket_client_initialized", symbols=self.symbols)
 
     async def stream_kline(self, symbol: str, interval: str = "1s"):
-        """Stream candlestick data for a symbol with auto-reconnect."""
+        """Membuka aliran data kandil untuk suatu instrumen kripto."""
         url = f"{self.ws_url}/{symbol}@kline_{interval}"
         reconnect_delay = INITIAL_RECONNECT_DELAY
 
@@ -54,7 +46,7 @@ class BinanceWebSocketClient:
                 logger.info("kline_stream_connecting", symbol=symbol, interval=interval)
                 async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
                     logger.info("kline_stream_connected", symbol=symbol)
-                    reconnect_delay = INITIAL_RECONNECT_DELAY  # reset on success
+                    reconnect_delay = INITIAL_RECONNECT_DELAY
 
                     while True:
                         msg = await ws.recv()
@@ -64,7 +56,6 @@ class BinanceWebSocketClient:
                         if not kline:
                             continue
 
-                        # Only process and persist CLOSED klines (x=True)
                         if kline.get("x"):
                             kline_data = {
                                 "symbol": kline["s"],
@@ -78,7 +69,6 @@ class BinanceWebSocketClient:
                                 "interval": interval,
                             }
 
-                            # Save raw closed kline to Bronze (MinIO)
                             try:
                                 from storage.minio_utils import save_to_bronze
                                 save_to_bronze(
@@ -89,48 +79,26 @@ class BinanceWebSocketClient:
                             except Exception as e:
                                 logger.debug("bronze_save_skipped", error=str(e))
 
-                            # Save to Silver (PostgreSQL)
                             if save_kline_data(kline_data):
-                                # Convert timestamp specifically for logging and price data
                                 wib = pytz.timezone('Asia/Jakarta')
                                 dt_utc = datetime.fromtimestamp(kline_data['close_time'] / 1000, tz=pytz.UTC)
                                 dt_wib = dt_utc.astimezone(wib)
-                                
-                                logger.info(
-                                    "time_conversion_verified",
-                                    raw_binance_ms=kline_data['close_time'],
-                                    parsed_utc=str(dt_utc),
-                                    converted_wib=str(dt_wib)
-                                )
 
-                                # Also save to PriceData for dashboard compatibility
                                 from storage.db_utils import save_price_data
                                 price_data = {
                                     'symbol': kline_data['symbol'],
                                     'price': kline_data['close'],
                                     'volume': kline_data['volume'],
-                                    'timestamp': dt_wib  # Timezone-aware WIB
+                                    'timestamp': dt_wib
                                 }
                                 save_price_data(price_data)
                                 
                                 metrics.increment("records_processed")
-                                logger.info(
-                                    "kline_received",
-                                    symbol=kline_data["symbol"],
-                                    close=kline_data["close"],
-                                    volume=kline_data["volume"],
-                                )
 
-                            # Check for anomalies
                             await self._check_price_anomaly(kline_data)
 
             except websockets.exceptions.ConnectionClosed as e:
-                logger.warning(
-                    "websocket_connection_closed",
-                    symbol=symbol,
-                    code=e.code,
-                    reason=str(e.reason),
-                )
+                logger.warning("websocket_connection_closed", symbol=symbol, code=e.code, reason=str(e.reason))
             except asyncio.CancelledError:
                 logger.info("kline_stream_cancelled", symbol=symbol)
                 return
@@ -138,17 +106,12 @@ class BinanceWebSocketClient:
                 logger.error("kline_stream_error", symbol=symbol, error=str(e))
                 metrics.increment("errors")
 
-            # Reconnect with exponential backoff
-            logger.info(
-                "websocket_reconnecting",
-                symbol=symbol,
-                delay_seconds=reconnect_delay,
-            )
+            logger.info("websocket_reconnecting", symbol=symbol, delay_seconds=reconnect_delay)
             await asyncio.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)
 
     async def _check_price_anomaly(self, kline_data: Dict):
-        """Check for price anomalies within a single kline."""
+        """Mengevaluasi secara seketika keberadaan anomali harga atau transaksi dengan volume signifikan (Whale)."""
         try:
             open_price = kline_data["open"]
             close_price = kline_data["close"]
@@ -157,18 +120,18 @@ class BinanceWebSocketClient:
 
             price_change = (close_price - open_price) / open_price
             abs_change = abs(price_change)
-            PRICE_CHANGE_THRESHOLD = 0.03  # 3%
+            PRICE_CHANGE_THRESHOLD = 0.03
 
             if abs_change > PRICE_CHANGE_THRESHOLD:
                 from storage.db_utils import save_anomaly_event
 
-                direction = "surged" if price_change > 0 else "dropped"
+                direction = "melonjak" if price_change > 0 else "anjlok"
                 anomaly = {
                     "event_type": "price_spike",
                     "symbol": kline_data["symbol"],
                     "description": (
                         f"{kline_data['symbol']} {direction} "
-                        f"{abs_change * 100:.2f}% in 1 second "
+                        f"{abs_change * 100:.2f}% dalam 1 detik "
                         f"(${open_price:,.2f} → ${close_price:,.2f})"
                     ),
                     "severity": "high" if abs_change > 0.05 else "medium",
@@ -178,17 +141,11 @@ class BinanceWebSocketClient:
 
                 save_anomaly_event(anomaly, send_alert=False)
                 metrics.increment("anomalies_detected")
-                logger.warning(
-                    "price_anomaly_detected",
-                    symbol=kline_data["symbol"],
-                    change_pct=price_change * 100,
-                )
+                logger.warning("price_anomaly_detected", symbol=kline_data["symbol"], change_pct=price_change * 100)
                 
-            # Check for Whale Trade (High volume in 1 second)
-            # Assumption: if volume * close_price > $100,000 in a 1-second candle, it's a whale
             volume = float(kline_data.get("volume", 0))
             notional_value = volume * close_price
-            WHALE_THRESHOLD = 100000.0  # $100k
+            WHALE_THRESHOLD = 600000.0
             
             if notional_value > WHALE_THRESHOLD:
                 from storage.db_utils import save_anomaly_event
@@ -196,20 +153,15 @@ class BinanceWebSocketClient:
                 whale_anomaly = {
                     "event_type": "whale_trade",
                     "symbol": kline_data["symbol"],
-                    "description": f"Whale detected! {volume:.2f} BTC traded (${notional_value:,.0f})",
-                    "severity": "high" if notional_value > 500000 else "medium",
+                    "description": f"Transaksi masif terdeteksi! {volume:.2f} koin ditransaksikan (${notional_value:,.0f})",
+                    "severity": "high" if notional_value > 1000000 else "medium",
                     "value": float(notional_value),
                     "threshold": WHALE_THRESHOLD,
                 }
                 save_anomaly_event(whale_anomaly, send_alert=True)
                 metrics.increment("whale_trades_detected")
-                logger.warning(
-                    "whale_trade_detected",
-                    symbol=kline_data["symbol"],
-                    notional=notional_value
-                )
+                logger.warning("whale_trade_detected", symbol=kline_data["symbol"], notional=notional_value)
 
-                # Send Telegram price spike alert
                 from monitoring.telegram_alert import send_price_spike_alert
                 send_price_spike_alert(
                     symbol=kline_data["symbol"],
@@ -221,24 +173,17 @@ class BinanceWebSocketClient:
             logger.error("anomaly_check_failed", error=str(e))
 
     async def stream_all_symbols(self):
-        """Stream klines for all symbols concurrently."""
+        """Memulai pengumpulan data secara paralel (concurrent) untuk seluruh instrumen."""
         tasks = [self.stream_kline(symbol) for symbol in self.symbols]
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def run_websocket_streams():
-    """Run WebSocket streams with startup notification."""
+    """Mengeksekusi aliran koneksi serta mengirimkan sinyal inisialisasi pada layanan pemantauan."""
     from monitoring.telegram_alert import send_startup_notification
 
     client = BinanceWebSocketClient()
     logger.info("websocket_streams_started", symbols=client.symbols)
-
-    print(f"\n{'='*60}")
-    print(f"  Binance WebSocket Streams")
-    print(f"  Symbols: {', '.join(client.symbols)}")
-    print(f"  WS URL: {WS_BASE_URL}")
-    print(f"  Reconnect delay: {INITIAL_RECONNECT_DELAY}s (max {MAX_RECONNECT_DELAY}s)")
-    print(f"{'='*60}\n")
 
     send_startup_notification()
 
@@ -251,12 +196,6 @@ async def run_websocket_streams():
 
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, ".")
-
-    # Initialize database
     from storage.db_models import init_db
     init_db()
-
-    # Run WebSocket streams
     asyncio.run(run_websocket_streams())

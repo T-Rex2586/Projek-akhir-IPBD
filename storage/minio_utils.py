@@ -1,11 +1,7 @@
 """
-MinIO utilities for Bronze Layer (Raw Data Lake) storage.
-
-Handles connection to MinIO and raw data persistence.
-Organizes data under a partition-friendly layout:
-bronze/{source}/year={YYYY}/month={MM}/day={DD}/{timestamp}_{unique_id}.json
-
-Includes connection retry logic for resilience during container startup.
+Modul Utilitas MinIO untuk pengelolaan Lapisan Perunggu (Bronze Layer).
+Berperan sebagai Danau Data (Data Lake) sekunder yang memastikan
+keseluruhan jejak muatan asli tersimpan dengan format hierarkis partisi.
 """
 import os
 import json
@@ -21,7 +17,6 @@ from monitoring.logger import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
-# Load configurations
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadminpassword")
@@ -32,7 +27,7 @@ _client = None
 
 
 def get_minio_client(max_retries: int = 3, retry_delay: float = 2.0) -> Minio:
-    """Lazy initialize and return the MinIO client with retry logic."""
+    """Menginisialisasi klien koneksi MinIO dengan pola lazy-initialization dan penanganan repetitif."""
     global _client
     if _client is None:
         for attempt in range(1, max_retries + 1):
@@ -45,7 +40,6 @@ def get_minio_client(max_retries: int = 3, retry_delay: float = 2.0) -> Minio:
                 )
                 logger.info("minio_client_initialized", endpoint=MINIO_ENDPOINT)
 
-                # Ensure the bronze bucket exists
                 if not _client.bucket_exists(BRONZE_BUCKET):
                     _client.make_bucket(BRONZE_BUCKET)
                     logger.info("minio_bucket_created", bucket=BRONZE_BUCKET)
@@ -54,34 +48,19 @@ def get_minio_client(max_retries: int = 3, retry_delay: float = 2.0) -> Minio:
                 if attempt == max_retries:
                     logger.error("minio_client_initialization_failed", error=str(e))
                     raise e
-                logger.warning(
-                    "minio_connection_retry",
-                    attempt=attempt,
-                    max_retries=max_retries,
-                    error=str(e),
-                )
+                logger.warning("minio_connection_retry", attempt=attempt, max_retries=max_retries, error=str(e))
                 time.sleep(retry_delay)
     return _client
 
 
 def save_to_bronze(source: str, data: Union[Dict[str, Any], str, bytes], identifier: str = None) -> bool:
     """
-    Save raw unprocessed data to the MinIO Bronze bucket.
-
-    Parameters
-    ----------
-    source : str
-        The source identifier (e.g. 'binance_websocket', 'binance_rest', 'reddit_scraper', 'rss_feed')
-    data : dict or str or bytes
-        The raw unprocessed data (payload / response)
-    identifier : str, optional
-        A unique identifier or filename suffix. If None, a UUID will be generated.
+    Mengarsipkan rekaman muatan kasar ke dalam partisi spesifik waktu pada Lapisan Perunggu.
     """
     try:
         client = get_minio_client()
         now = datetime.utcnow()
 
-        # Format layout for partitioning
         year = now.strftime("%Y")
         month = now.strftime("%m")
         day = now.strftime("%d")
@@ -92,7 +71,6 @@ def save_to_bronze(source: str, data: Union[Dict[str, Any], str, bytes], identif
 
         file_extension = "json"
         
-        # Serialize/normalize input to bytes
         if isinstance(data, (dict, list)):
             content_bytes = json.dumps(data, default=str).encode("utf-8")
         elif isinstance(data, str):
@@ -101,7 +79,6 @@ def save_to_bronze(source: str, data: Union[Dict[str, Any], str, bytes], identif
                 file_extension = "xml"
         elif isinstance(data, (bytes, bytearray)):
             content_bytes = bytes(data)
-            # Detect XML content from raw bytes
             if content_bytes.lstrip()[:5] in (b"<?xml", b"<rss ", b"<feed", b"<html"):
                 file_extension = "xml"
         else:
@@ -109,7 +86,6 @@ def save_to_bronze(source: str, data: Union[Dict[str, Any], str, bytes], identif
 
         object_name = f"bronze/{source}/year={year}/month={month}/day={day}/{timestamp_str}_{identifier}.{file_extension}"
         
-        # Upload using stream
         stream = BytesIO(content_bytes)
         client.put_object(
             BRONZE_BUCKET,
@@ -128,21 +104,7 @@ def save_to_bronze(source: str, data: Union[Dict[str, Any], str, bytes], identif
 
 
 def list_bronze_objects(prefix: str = "bronze/", max_results: int = 100) -> List[Dict]:
-    """
-    List objects in the Bronze bucket for debugging and monitoring.
-
-    Parameters
-    ----------
-    prefix : str
-        Object name prefix filter (e.g. 'bronze/binance_websocket/')
-    max_results : int
-        Maximum number of objects to return.
-
-    Returns
-    -------
-    list of dict
-        Each dict contains: name, size, last_modified.
-    """
+    """Menyajikan rincian agregat terhadap objek biner yang bermukim di dalam kontainer Lapisan Perunggu."""
     try:
         client = get_minio_client()
         objects = client.list_objects(BRONZE_BUCKET, prefix=prefix, recursive=True)
@@ -163,4 +125,3 @@ def list_bronze_objects(prefix: str = "bronze/", max_results: int = 100) -> List
     except Exception as e:
         logger.error("list_bronze_objects_failed", error=str(e))
         return []
-

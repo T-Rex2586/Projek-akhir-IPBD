@@ -1,34 +1,22 @@
 """
-Enhanced Telegram Bot alert system for crypto pipeline.
+Sistem notifikasi Telegram untuk pemantauan alur kerja data kripto.
 
-Features:
-- Real-time anomaly alerts (price spikes, volume surges, sentiment crashes)
-- Daily/hourly summaries with charts
-- Pipeline health monitoring
-- Price threshold alerts
-- Interactive commands support (/predict, /status, /help)
-- Auto-alerts for news sentiment (positive & negative)
-- Trading signals (BUY/SELL/HOLD) with ML predictions
-- Rate limiting & deduplication
-- Rich HTML formatting
-- Statistics tracking
-
-Setup:
-1. Create bot via @BotFather → get token
-2. Get chat_id from @userinfobot
-3. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
-4. Start bot listener: python monitoring/telegram_alert.py
+Menyediakan fungsionalitas peringatan anomali waktu nyata, ringkasan harian/per jam,
+serta perintah interaktif untuk memberikan sinyal perdagangan berbasis pembelajaran mesin.
 """
+
 import os
 import sys
 import requests
 import threading
+import time
+import argparse
 from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
 import html
 
-# Add project root to path for direct execution
+# Konfigurasi path proyek
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from monitoring.logger import get_logger
@@ -39,13 +27,14 @@ logger = get_logger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+ADMIN_TELEGRAM_CHAT_ID = os.getenv("ADMIN_TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-# Rate limiting: minimum seconds between identical alerts
+# Mekanisme pembatasan laju pengiriman (rate limiting)
 _last_alert_times = {}
 ALERT_COOLDOWN_SECONDS = 60
 
-# Alert statistics with more detail
+# Statistik pengiriman pesan
 _alert_stats = {
     "total_sent": 0,
     "anomalies": 0,
@@ -60,10 +49,9 @@ _alert_count_date = datetime.utcnow().date()
 
 
 def _is_configured() -> bool:
-    """Check if Telegram credentials are configured."""
+    """Memvalidasi konfigurasi kredensial API Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
-    # Basic validation
     if len(TELEGRAM_BOT_TOKEN) < 40 or not TELEGRAM_CHAT_ID.lstrip('-').isdigit():
         logger.warning("telegram_invalid_credentials")
         return False
@@ -71,18 +59,8 @@ def _is_configured() -> bool:
 
 
 def _send_message(text: str, parse_mode: str = "HTML") -> bool:
-    """
-    Send a message to the configured Telegram chat.
-
-    Parameters
-    ----------
-    text : str
-        Message body (supports HTML formatting).
-    parse_mode : str
-        Telegram parse mode: 'HTML' or 'Markdown'.
-    """
+    """Mengirim pesan ke saluran Telegram yang telah dikonfigurasi."""
     if not _is_configured():
-        logger.debug("telegram_not_configured_skipping_alert")
         return False
 
     try:
@@ -102,21 +80,12 @@ def _send_message(text: str, parse_mode: str = "HTML") -> bool:
         if result.get("ok"):
             _increment_alert_count("total_sent")
             _alert_stats["last_alert_time"] = datetime.utcnow()
-            logger.info("telegram_alert_sent", chat_id=TELEGRAM_CHAT_ID, message_id=result.get("result", {}).get("message_id"))
+            logger.info("telegram_alert_sent", chat_id=TELEGRAM_CHAT_ID)
             return True
         else:
             _increment_alert_count("failed")
-            logger.warning("telegram_api_error", response=result)
             return False
 
-    except requests.exceptions.Timeout:
-        _increment_alert_count("failed")
-        logger.error("telegram_timeout", timeout=10)
-        return False
-    except requests.exceptions.RequestException as e:
-        _increment_alert_count("failed")
-        logger.error("telegram_network_error", error=str(e))
-        return False
     except Exception as e:
         _increment_alert_count("failed")
         logger.error("telegram_send_failed", error=str(e))
@@ -124,13 +93,53 @@ def _send_message(text: str, parse_mode: str = "HTML") -> bool:
 
 
 def _send_async(text: str, parse_mode: str = "HTML"):
-    """Fire-and-forget: send alert without blocking the pipeline."""
+    """Mengirim pesan Telegram secara asinkron (fire-and-forget)."""
     thread = threading.Thread(target=_send_message, args=(text, parse_mode), daemon=True)
     thread.start()
 
 
+def _send_admin_message(text: str, parse_mode: str = "HTML") -> bool:
+    """Mengirim pesan khusus kepada administrator sistem."""
+    if not _is_configured():
+        return False
+    chat_id = ADMIN_TELEGRAM_CHAT_ID or TELEGRAM_CHAT_ID
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API_URL}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode, "disable_web_page_preview": True},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error("telegram_send_admin_failed", error=str(e))
+        return False
+
+
+def _send_admin_async(text: str, parse_mode: str = "HTML"):
+    thread = threading.Thread(target=_send_admin_message, args=(text, parse_mode), daemon=True)
+    thread.start()
+
+
+def _send_direct_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
+    """Mengirim pesan langsung ke ID pengguna tertentu."""
+    if not _is_configured():
+        return False
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API_URL}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode, "disable_web_page_preview": True},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error("telegram_send_direct_failed", error=str(e), chat_id=chat_id)
+        return False
+
+
 def _should_send(alert_key: str) -> bool:
-    """Rate-limit check: avoid spamming the same alert type."""
+    """Mengevaluasi batas pengiriman pesan berdasarkan interval waktu pendinginan."""
     now = datetime.utcnow().timestamp()
     last = _last_alert_times.get(alert_key, 0)
     if now - last < ALERT_COOLDOWN_SECONDS:
@@ -140,15 +149,13 @@ def _should_send(alert_key: str) -> bool:
 
 
 def _increment_alert_count(counter_name: str = "total_sent"):
-    """Track alert statistics."""
+    """Memperbarui statistik internal untuk pelaporan aktivitas peringatan."""
     global _alert_count_date
     today = datetime.utcnow().date()
     
-    # Reset daily counters at midnight
     if today != _alert_count_date:
-        logger.info("telegram_stats_reset", date=str(today))
         for key in _alert_stats:
-            if key not in ["last_alert_time"]:
+            if key != "last_alert_time":
                 _alert_stats[key] = 0
         _alert_count_date = today
     
@@ -157,41 +164,27 @@ def _increment_alert_count(counter_name: str = "total_sent"):
 
 
 def get_alert_stats() -> dict:
-    """Return comprehensive alerting statistics."""
+    """Mengembalikan akumulasi statistik peringatan Telegram."""
     return {
         **_alert_stats,
         "date": str(_alert_count_date),
         "configured": _is_configured(),
         "bot_token_set": bool(TELEGRAM_BOT_TOKEN),
         "chat_id_set": bool(TELEGRAM_CHAT_ID),
-        "last_alert": str(_alert_stats["last_alert_time"]) if _alert_stats["last_alert_time"] else "Never",
+        "last_alert": str(_alert_stats["last_alert_time"]) if _alert_stats["last_alert_time"] else "Tidak Ada",
     }
 
 
 def _sanitize_error(msg: str, max_length: int = 300) -> str:
-    """Sanitize error messages: truncate and remove sensitive info."""
-    # Remove file paths that might leak system info
+    """Membersihkan pesan kesalahan dari detail sistem yang bersifat sensitif."""
     sanitized = msg.replace("\\", "/")
-    # Truncate
     if len(sanitized) > max_length:
         sanitized = sanitized[:max_length] + "..."
     return sanitized
 
 
-# ──────────────────────────────────────────────────────────────────────
-# High-level alert functions called by the pipeline
-# ──────────────────────────────────────────────────────────────────────
-
 def send_anomaly_alert(anomaly: dict):
-    """
-    Send an alert for a detected anomaly event.
-
-    Parameters
-    ----------
-    anomaly : dict
-        Must contain keys: event_type, description, severity.
-        Optional: symbol, value, threshold.
-    """
+    """Mengirimkan peringatan jika terdeteksi adanya kejadian anomali pada data."""
     event_type = anomaly.get("event_type", "unknown")
     symbol = anomaly.get("symbol", "N/A")
     alert_key = f"anomaly_{event_type}_{symbol}"
@@ -204,24 +197,22 @@ def send_anomaly_alert(anomaly: dict):
     severity = anomaly.get("severity", "medium")
     severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(severity, "⚪")
     
-    # Enhanced event type display
     event_display = {
-        "price_spike": "💹 Price Spike",
-        "stream_price_spike": "💹 Price Spike (Stream)",
-        "volume_surge": "📊 Volume Surge",
-        "stream_volume_surge": "📊 Volume Surge (Stream)",
-        "sentiment_crash": "😱 Sentiment Crash",
-        "stream_sentiment_crash": "😱 Sentiment Crash (Stream)",
-        "volatility_spike": "⚡ High Volatility",
-        "sudden_drop": "📉 Sudden Drop",
-        "ml_anomaly": "🤖 ML Anomaly",
-        "batch_ml_anomaly": "🤖 ML Anomaly (Batch)",
-        "whale_trade": "🐋 Whale Trade",
-        "bearish_divergence": "⚠️ Bearish Divergence",
-        "bullish_divergence": "🚀 Bullish Divergence"
+        "price_spike": "💹 Lonjakan Harga",
+        "stream_price_spike": "💹 Lonjakan Harga (Stream)",
+        "volume_surge": "📊 Lonjakan Volume",
+        "stream_volume_surge": "📊 Lonjakan Volume (Stream)",
+        "sentiment_crash": "😱 Penurunan Sentimen",
+        "stream_sentiment_crash": "😱 Penurunan Sentimen (Stream)",
+        "volatility_spike": "⚡ Volatilitas Tinggi",
+        "sudden_drop": "📉 Penurunan Tajam",
+        "ml_anomaly": "🤖 Anomali ML",
+        "batch_ml_anomaly": "🤖 Anomali ML (Batch)",
+        "whale_trade": "🐋 Transaksi Skala Besar",
+        "bearish_divergence": "⚠️ Divergensi Bearish",
+        "bullish_divergence": "🚀 Divergensi Bullish"
     }.get(event_type, event_type.replace("_", " ").title())
 
-    # Customize Emoji based on event type
     if "whale" in event_type:
         severity_emoji = "🐋"
     elif "bullish" in event_type:
@@ -230,23 +221,23 @@ def send_anomaly_alert(anomaly: dict):
         severity_emoji = "⚠️"
 
     text = (
-        f"{severity_emoji} <b>ANOMALY DETECTED</b>\n"
+        f"{severity_emoji} <b>DETEKSI ANOMALI</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>Type:</b> {event_display}\n"
-        f"💎 <b>Symbol:</b> {symbol}\n"
+        f"🎯 <b>Tipe:</b> {event_display}\n"
+        f"💎 <b>Simbol:</b> {symbol}\n"
         f"📝 <b>Detail:</b> {html.escape(str(anomaly.get('description', '-')))}\n"
-        f"📊 <b>Value:</b> {anomaly.get('value', '-')}\n"
-        f"⚡ <b>Threshold:</b> {anomaly.get('threshold', '-')}\n"
-        f"🔥 <b>Severity:</b> {severity.upper()}\n"
-        f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-        f"\n💡 <i>Check dashboard for more details</i>"
+        f"📊 <b>Nilai:</b> {anomaly.get('value', '-')}\n"
+        f"⚡ <b>Ambang Batas:</b> {anomaly.get('threshold', '-')}\n"
+        f"🔥 <b>Tingkat Keparahan:</b> {severity.upper()}\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}\n"
+        f"\n💡 <i>Periksa dasbor untuk informasi lebih lanjut.</i>"
     )
 
     _send_async(text)
 
 
 def send_price_spike_alert(symbol: str, price_change_pct: float, current_price: float, previous_price: Optional[float] = None):
-    """Alert for a significant price spike."""
+    """Menyiarkan peringatan ketika terdapat perubahan harga yang ekstrem."""
     alert_key = f"price_spike_{symbol}"
     if not _should_send(alert_key):
         return
@@ -254,57 +245,50 @@ def send_price_spike_alert(symbol: str, price_change_pct: float, current_price: 
     _increment_alert_count("price_spikes")
     
     direction = "📈" if price_change_pct > 0 else "📉"
-    trend_word = "SURGE" if price_change_pct > 0 else "DROP"
+    trend_word = "NAIK" if price_change_pct > 0 else "TURUN"
     
-    prev_text = f"\n📌 <b>Previous:</b> ${previous_price:,.2f}" if previous_price else ""
+    prev_text = f"\n📌 <b>Sebelumnya:</b> ${previous_price:,.2f}" if previous_price else ""
 
     text = (
-        f"{direction} <b>PRICE {trend_word}</b>\n"
+        f"{direction} <b>HARGA {trend_word}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💎 <b>Symbol:</b> {symbol}\n"
-        f"💰 <b>Current:</b> ${current_price:,.2f}{prev_text}\n"
-        f"📊 <b>Change:</b> {price_change_pct:+.2f}%\n"
-        f"⏱️ <b>Window:</b> 5 minutes\n"
-        f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-        f"\n💡 <i>{'🚀 To the moon!' if price_change_pct > 0 else '⚠️ Watch out!'}</i>"
+        f"💎 <b>Simbol:</b> {symbol}\n"
+        f"💰 <b>Sekarang:</b> ${current_price:,.2f}{prev_text}\n"
+        f"📊 <b>Perubahan:</b> {price_change_pct:+.2f}%\n"
+        f"⏱️ <b>Rentang Waktu:</b> 5 menit\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}"
     )
 
     _send_async(text)
 
 
 def send_prediction_alert(symbol: str, current_price: float, predicted_price: float, signal: str, confidence: float):
-    """Alert for ML price prediction and trading signal."""
+    """Menginformasikan prediksi harga serta sinyal perdagangan dari model LSTM."""
     alert_key = f"prediction_{symbol}_{signal}"
     if not _should_send(alert_key):
         return
 
     _increment_alert_count("anomalies")
 
-    signal_emoji = {
-        'BUY': '🟢',
-        'SELL': '🔴',
-        'HOLD': '🟡'
-    }.get(signal, '⚪')
-    
+    signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡'}.get(signal, '⚪')
     price_change_pct = ((predicted_price - current_price) / current_price) * 100
     
     text = (
-        f"{signal_emoji} <b>LSTM PREDICTION SIGNAL</b>\n"
+        f"{signal_emoji} <b>SINYAL PREDIKSI LSTM</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💎 <b>Symbol:</b> {symbol}\n"
-        f"📊 <b>Signal:</b> {signal}\n"
-        f"🎯 <b>Confidence:</b> {confidence:.2%}\n"
-        f"💰 <b>Current:</b> ${current_price:,.2f}\n"
-        f"🔮 <b>Predicted:</b> ${predicted_price:,.2f} ({price_change_pct:+.2f}%)\n"
-        f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-        f"\n💡 <i>Automated AI Trading Signal</i>"
+        f"💎 <b>Simbol:</b> {symbol}\n"
+        f"📊 <b>Sinyal:</b> {signal}\n"
+        f"🎯 <b>Tingkat Kepercayaan:</b> {confidence:.2%}\n"
+        f"💰 <b>Sekarang:</b> ${current_price:,.2f}\n"
+        f"🔮 <b>Prediksi:</b> ${predicted_price:,.2f} ({price_change_pct:+.2f}%)\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}"
     )
 
     _send_async(text)
 
 
 def send_volume_alert(symbol: str, current_volume: float, avg_volume: float, surge_multiplier: float):
-    """Alert for unusual volume activity."""
+    """Memberikan notifikasi terkait aktivitas volume perdagangan yang tidak wajar."""
     alert_key = f"volume_{symbol}"
     if not _should_send(alert_key):
         return
@@ -312,21 +296,20 @@ def send_volume_alert(symbol: str, current_volume: float, avg_volume: float, sur
     _increment_alert_count("anomalies")
 
     text = (
-        f"📊 <b>VOLUME SURGE</b>\n"
+        f"📊 <b>LONJAKAN VOLUME</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💎 <b>Symbol:</b> {symbol}\n"
-        f"📈 <b>Current Vol:</b> {current_volume:,.0f}\n"
-        f"📉 <b>Avg Vol:</b> {avg_volume:,.0f}\n"
-        f"⚡ <b>Multiplier:</b> {surge_multiplier:.2f}x\n"
-        f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-        f"\n💡 <i>High trading activity detected!</i>"
+        f"💎 <b>Simbol:</b> {symbol}\n"
+        f"📈 <b>Volume Saat Ini:</b> {current_volume:,.0f}\n"
+        f"📉 <b>Rata-rata Volume:</b> {avg_volume:,.0f}\n"
+        f"⚡ <b>Pengali:</b> {surge_multiplier:.2f}x\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}"
     )
 
     _send_async(text)
 
 
 def send_news_sentiment_alert(source: str, sentiment_score: float, title: str):
-    """Alert for significant news sentiment (very positive or very negative)."""
+    """Mengirim peringatan jika terdeteksi sentimen berita yang signifikan."""
     alert_key = f"news_{source}_{int(abs(sentiment_score)*100)}"
     if not _should_send(alert_key):
         return
@@ -335,46 +318,90 @@ def send_news_sentiment_alert(source: str, sentiment_score: float, title: str):
     
     if sentiment_score > 0.5:
         emoji = "🟢"
-        label = "POSITIVE NEWS"
+        label = "BERITA POSITIF"
     elif sentiment_score < -0.5:
         emoji = "🔴"
-        label = "NEGATIVE NEWS"
+        label = "BERITA NEGATIF"
     else:
-        return  # Skip neutral news
+        return
     
     text = (
         f"{emoji} <b>{label}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📰 <b>Source:</b> {html.escape(source)}\n"
-        f"📊 <b>Sentiment:</b> {sentiment_score:+.3f}\n"
-        f"📝 <b>Headline:</b> {html.escape(title[:150])}\n"
-        f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-        f"\n💡 <i>{'📈 Bullish signal!' if sentiment_score > 0 else '📉 Bearish signal!'}</i>"
+        f"📰 <b>Sumber:</b> {html.escape(source)}\n"
+        f"📊 <b>Sentimen:</b> {sentiment_score:+.3f}\n"
+        f"📝 <b>Judul Utama:</b> {html.escape(title[:150])}\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}"
     )
     
     _send_async(text)
 
 
 def send_pipeline_error_alert(component: str, error_msg: str):
-    """Alert for a critical pipeline failure."""
+    """Melaporkan kegagalan sistematis pada komponen infrastruktur data (Hanya ke Admin)."""
     alert_key = f"error_{component}"
     if not _should_send(alert_key):
         return
 
     _increment_alert_count("errors")
-    
     safe_error = _sanitize_error(error_msg)
 
     text = (
-        f"⛔ <b>PIPELINE ERROR</b>\n"
+        f"⛔ <b>KESALAHAN SISTEM</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔧 <b>Component:</b> {html.escape(component)}\n"
-        f"❌ <b>Error:</b> <code>{html.escape(safe_error)}</code>\n"
-        f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-        f"\n⚠️ <i>Action required! Check logs immediately.</i>"
+        f"🔧 <b>Komponen:</b> {html.escape(component)}\n"
+        f"❌ <b>Kesalahan:</b> <code>{html.escape(safe_error)}</code>\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}\n"
+        f"\n⚠️ <i>Diperlukan tinjauan segera.</i>"
     )
 
-    _send_async(text)
+    _send_admin_async(text)
+
+
+def send_pipeline_resolved_alert(component: str):
+    """Memberitahukan bahwa komponen yang sebelumnya bermasalah telah pulih (Hanya ke Admin)."""
+    alert_key = f"error_{component}"
+    
+    # Reset cooldown agar jika error terjadi lagi, ia tidak tertahan oleh rate limit
+    if alert_key in _last_alert_times:
+        del _last_alert_times[alert_key]
+
+    text = (
+        f"✅ <b>SISTEM PULIH</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🔧 <b>Komponen:</b> {html.escape(component)}\n"
+        f"✨ <b>Status:</b> Operasi kembali normal\n"
+        f"🕐 <b>Waktu:</b> {format_wib(now_wib())}"
+    )
+
+    _send_admin_async(text)
+
+
+def send_airflow_failure_alert(context: dict):
+    """Menangani panggilan balik kegagalan fungsi pada alur DAG Airflow."""
+    _increment_alert_count("errors")
+    
+    task_instance = context.get('task_instance')
+    task_id = task_instance.task_id if task_instance else 'unknown_task'
+    dag_id = task_instance.dag_id if task_instance else 'unknown_dag'
+    exec_date = context.get('execution_date')
+    exec_date_str = exec_date.strftime('%Y-%m-%d %H:%M:%S') if exec_date else 'unknown'
+    exception = context.get('exception')
+    
+    safe_error = _sanitize_error(str(exception), max_length=500)
+
+    text = (
+        f"🚨 <b>KEGAGALAN TUGAS AIRFLOW</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🛠 <b>DAG:</b> {html.escape(dag_id)}\n"
+        f"📌 <b>Tugas:</b> {html.escape(task_id)}\n"
+        f"⏰ <b>Waktu Eksekusi:</b> {exec_date_str}\n"
+        f"❌ <b>Kesalahan:</b> <code>{html.escape(safe_error)}</code>\n"
+        f"🕐 <b>Waktu Laporan:</b> {format_wib(now_wib())}\n"
+        f"\n⚠️ <i>Tinjau log Airflow terkait informasi selengkapnya.</i>"
+    )
+
+    _send_admin_async(text)
 
 
 def send_daily_summary(
@@ -385,329 +412,266 @@ def send_daily_summary(
     top_symbol: Optional[str] = None,
     top_symbol_change: Optional[float] = None,
 ):
-    """Send a comprehensive daily pipeline health summary."""
+    """Menerbitkan ringkasan komprehensif atas operasi pemrosesan harian."""
     _increment_alert_count("summaries")
     
     sentiment_emoji = "🟢" if avg_sentiment > 0.05 else "🔴" if avg_sentiment < -0.05 else "⚪"
-    sentiment_label = "Positive" if avg_sentiment > 0.05 else "Negative" if avg_sentiment < -0.05 else "Neutral"
+    sentiment_label = "Positif" if avg_sentiment > 0.05 else "Negatif" if avg_sentiment < -0.05 else "Netral"
     
     top_performer = ""
     if top_symbol and top_symbol_change is not None:
         perf_emoji = "📈" if top_symbol_change > 0 else "📉"
-        top_performer = f"{perf_emoji} <b>Top Performer:</b> {top_symbol} ({top_symbol_change:+.2f}%)\n"
+        top_performer = f"{perf_emoji} <b>Performa Tertinggi:</b> {top_symbol} ({top_symbol_change:+.2f}%)\n"
 
     text = (
-        f"📊 <b>DAILY PIPELINE SUMMARY</b>\n"
+        f"📊 <b>RINGKASAN SISTEM HARIAN</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📅 <b>Date:</b> {now_wib().strftime('%Y-%m-%d')}\n"
-        f"\n<b>📈 Data Collected</b>\n"
-        f"💰 Price Records: {total_prices:,}\n"
-        f"📰 News Articles: {total_news:,}\n"
-        f"🚨 Anomalies: {total_anomalies}\n"
-        f"\n<b>💭 Market Sentiment</b>\n"
-        f"{sentiment_emoji} Overall: {sentiment_label} ({avg_sentiment:+.3f})\n"
-        f"\n<b>🏆 Performance</b>\n"
+        f"📅 <b>Tanggal:</b> {now_wib().strftime('%Y-%m-%d')}\n"
+        f"\n<b>📈 Data yang Diperoleh</b>\n"
+        f"💰 Rekaman Harga: {total_prices:,}\n"
+        f"📰 Artikel Berita: {total_news:,}\n"
+        f"🚨 Kejadian Anomali: {total_anomalies}\n"
+        f"\n<b>💭 Sentimen Pasar</b>\n"
+        f"{sentiment_emoji} Rata-rata: {sentiment_label} ({avg_sentiment:+.3f})\n"
+        f"\n<b>🏆 Kinerja Aset</b>\n"
         f"{top_performer}"
-        f"📬 Alerts Sent: {_alert_stats['total_sent']}\n"
-        f"\n🕐 <b>Report Time:</b> {format_wib_short(now_wib())}\n"
-        f"\n✅ <i>Pipeline running smoothly!</i>"
+        f"📬 Peringatan Terkirim: {_alert_stats['total_sent']}\n"
+        f"\n🕐 <b>Waktu Pelaporan:</b> {format_wib_short(now_wib())}"
     )
 
     _send_async(text)
 
 
 def send_hourly_summary(symbol: str, avg_price: float, min_price: float, max_price: float, volume: float):
-    """Send hourly summary for a specific symbol."""
+    """Menyediakan ringkasan pasar dalam skala per jam."""
     volatility = ((max_price - min_price) / avg_price * 100) if avg_price > 0 else 0
     
     text = (
-        f"⏰ <b>HOURLY SUMMARY</b>\n"
+        f"⏰ <b>RINGKASAN PER JAM</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💎 <b>Symbol:</b> {symbol}\n"
-        f"💰 <b>Avg Price:</b> ${avg_price:,.2f}\n"
-        f"📊 <b>Range:</b> ${min_price:,.2f} - ${max_price:,.2f}\n"
-        f"⚡ <b>Volatility:</b> {volatility:.2f}%\n"
+        f"💎 <b>Simbol:</b> {symbol}\n"
+        f"💰 <b>Rata-rata Harga:</b> ${avg_price:,.2f}\n"
+        f"📊 <b>Rentang:</b> ${min_price:,.2f} - ${max_price:,.2f}\n"
+        f"⚡ <b>Volatilitas:</b> {volatility:.2f}%\n"
         f"📈 <b>Volume:</b> {volume:,.0f}\n"
-        f"🕐 <b>Time:</b> {now_wib().strftime('%Y-%m-%d %H:00')} WIB"
+        f"🕐 <b>Waktu:</b> {now_wib().strftime('%Y-%m-%d %H:00')} WIB"
     )
     
     _send_async(text)
 
 
 def send_startup_notification():
-    """Send a notification when the pipeline starts."""
+    """Mengirim sinyal inisialisasi ketika pipeline mulai beroperasi."""
     text = (
-        f"🚀 <b>PIPELINE STARTED</b>\n"
+        f"🚀 <b>INISIALISASI SISTEM</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"✅ Crypto Sentiment & Price Analytics Pipeline is now running.\n"
-        f"\n<b>📡 Active Components:</b>\n"
-        f"• Binance WebSocket (Real-time)\n"
-        f"• News Scraper (7 sources)\n"
-        f"• Sentiment Analysis (VADER)\n"
-        f"• Anomaly Detection (ML)\n"
-        f"• Gold Layer Processor\n"
-        f"\n🕐 <b>Start Time:</b> {format_wib(now_wib())}\n"
-        f"\n💡 <i>All systems operational!</i>"
+        f"✅ Pipeline Analisis Sentimen & Harga Kripto telah diaktifkan.\n"
+        f"\n<b>📡 Komponen Aktif:</b>\n"
+        f"• Aliran Data Binance WebSocket\n"
+        f"• Pengumpulan Berita RSS\n"
+        f"• Analisis Sentimen (VADER)\n"
+        f"• Deteksi Anomali Berbasis ML\n"
+        f"• Modul Pemrosesan Lapisan Emas\n"
+        f"\n🕐 <b>Waktu Mulai:</b> {format_wib(now_wib())}"
     )
 
     _send_async(text)
 
 
 def send_shutdown_notification():
-    """Send a notification when pipeline stops."""
+    """Mengirim pemberitahuan terminasi sistem."""
     text = (
-        f"🛑 <b>PIPELINE STOPPED</b>\n"
+        f"🛑 <b>TERMINASI SISTEM</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Pipeline has been shut down gracefully.\n"
-        f"\n📊 <b>Session Stats:</b>\n"
-        f"• Alerts Sent: {_alert_stats['total_sent']}\n"
-        f"• Anomalies: {_alert_stats['anomalies']}\n"
-        f"• Errors: {_alert_stats['errors']}\n"
-        f"\n🕐 <b>Stop Time:</b> {format_wib(now_wib())}"
+        f"Pipeline telah dimatikan secara prosedural.\n"
+        f"\n📊 <b>Statistik Sesi:</b>\n"
+        f"• Pesan Terkirim: {_alert_stats['total_sent']}\n"
+        f"• Anomali: {_alert_stats['anomalies']}\n"
+        f"• Kesalahan: {_alert_stats['errors']}\n"
+        f"\n🕐 <b>Waktu Berhenti:</b> {format_wib(now_wib())}"
     )
     
     _send_async(text)
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Interactive Bot Commands
-# ──────────────────────────────────────────────────────────────────────
-
-def handle_predict_command(symbol: str = "BTCUSDT"):
-    """Handle /predict command - get ML trading signal."""
+def handle_predict_command(chat_id: str = None, symbol: str = "BTCUSDT"):
+    """Menanggapi perintah untuk melakukan prediksi harga berbasis model LSTM."""
+    chat_id = chat_id or TELEGRAM_CHAT_ID
     try:
         from ml.inference.lstm_inference import fetch_recent_data
         from ml.models.lstm_price_predictor import LSTMPricePredictor
         
-        # Initialize predictor
         predictor = LSTMPricePredictor(symbol=symbol)
         
-        # Load model
         if not predictor.load_model():
             text = (
-                f"⚠️ <b>Model Not Found</b>\n"
+                f"⚠️ <b>Model Tidak Ditemukan</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"No trained LSTM model for {symbol}.\n"
-                f"\n💡 <i>Train model first:\n"
-                f"python ml/training/train_lstm_model.py --symbol {symbol}</i>"
+                f"Model LSTM belum dilatih untuk instrumen {symbol}.\n"
+                f"\n💡 <i>Harap jalankan pelatihan awal.</i>"
             )
-            _send_message(text)
+            _send_direct_message(chat_id, text)
             return
         
-        # Fetch recent data
         df = fetch_recent_data(symbol, hours=6)
-        
         if df.empty or len(df) < predictor.lookback_window:
             text = (
-                f"⚠️ <b>Insufficient Data</b>\n"
+                f"⚠️ <b>Kekurangan Data Historis</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"Need at least {predictor.lookback_window} records.\n"
-                f"Currently have: {len(df)}\n"
-                f"\n💡 <i>Wait for WebSocket to collect more data</i>"
+                f"Membutuhkan sekurang-kurangnya {predictor.lookback_window} rekaman.\n"
+                f"Data saat ini: {len(df)}\n"
             )
-            _send_message(text)
+            _send_direct_message(chat_id, text)
             return
         
-        # Make prediction
         prediction = predictor.predict_next(df)
-        
         if 'error' in prediction:
             text = (
-                f"❌ <b>Prediction Error</b>\n"
+                f"❌ <b>Kesalahan Prediksi</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"<code>{prediction['error']}</code>"
             )
-            _send_message(text)
+            _send_direct_message(chat_id, text)
             return
         
-        # Send prediction alert
-        signal_emoji = {
-            'BUY': '🟢',
-            'SELL': '🔴',
-            'HOLD': '🟡'
-        }.get(prediction['signal'], '⚪')
-        
+        signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡'}.get(prediction['signal'], '⚪')
         signal_advice = {
-            'BUY': '📈 Consider buying - price expected to rise',
-            'SELL': '📉 Consider selling - price expected to fall',
-            'HOLD': '⏸️ Hold position - minimal movement expected'
+            'BUY': '📈 Sinyal Beli - Proyeksi kenaikan harga teridentifikasi',
+            'SELL': '📉 Sinyal Jual - Proyeksi penurunan harga teridentifikasi',
+            'HOLD': '⏸️ Sinyal Tahan - Fluktuasi tidak signifikan'
         }.get(prediction['signal'], '')
         
         text = (
-            f"{signal_emoji} <b>LSTM PREDICTION</b>\n"
+            f"{signal_emoji} <b>PROYEKSI HARGA LSTM</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"💎 <b>Symbol:</b> {symbol}\n"
-            f"💰 <b>Current Price:</b> ${prediction['current_price']:,.2f}\n"
-            f"🔮 <b>Predicted Price:</b> ${prediction['predicted_price']:,.2f}\n"
-            f"📊 <b>Expected Change:</b> {prediction['price_change_pct']:+.2f}%\n"
-            f"\n<b>🎯 TRADING SIGNAL: {prediction['signal']}</b>\n"
-            f"🎲 <b>Confidence:</b> {prediction['confidence']:.1%}\n"
+            f"💎 <b>Simbol:</b> {symbol}\n"
+            f"💰 <b>Harga Aktul:</b> ${prediction['current_price']:,.2f}\n"
+            f"🔮 <b>Harga Proyeksi:</b> ${prediction['predicted_price']:,.2f}\n"
+            f"📊 <b>Ekspektasi Perubahan:</b> {prediction['price_change_pct']:+.2f}%\n"
+            f"\n<b>🎯 SINYAL TRANSAKSI: {prediction['signal']}</b>\n"
+            f"🎲 <b>Tingkat Kepercayaan:</b> {prediction['confidence']:.1%}\n"
             f"\n💡 {signal_advice}\n"
-            f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-            f"\n⚠️ <i>Not financial advice - DYOR!</i>"
+            f"🕐 <b>Waktu:</b> {format_wib(now_wib())}\n"
+            f"\n⚠️ <i>Sistem ini ditujukan untuk eksperimen analitik akademis semata.</i>"
         )
         
-        _send_message(text)
+        _send_direct_message(chat_id, text)
         logger.info("telegram_predict_command_handled", symbol=symbol, signal=prediction['signal'])
         
     except Exception as e:
         logger.error("telegram_predict_command_error", error=str(e))
         text = (
-            f"❌ <b>Command Error</b>\n"
+            f"❌ <b>Kesalahan Perintah</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"<code>{_sanitize_error(str(e))}</code>\n"
-            f"\n💡 <i>Check logs for details</i>"
+            f"<code>{_sanitize_error(str(e))}</code>"
         )
-        _send_message(text)
+        _send_direct_message(chat_id, text)
 
 
-def handle_status_command():
-    """Handle /status command - get system status."""
+def handle_status_command(chat_id: str = None):
+    """Menanggapi permintaan diagnostik status dari pengguna."""
+    chat_id = chat_id or TELEGRAM_CHAT_ID
     try:
         from storage.db_models import get_session, PriceData, NewsArticle, AnomalyEvent
         from monitoring.logger import metrics as pipeline_metrics
         
         session = get_session()
-        
         try:
-            # Count records
             price_count = session.query(PriceData).count()
             news_count = session.query(NewsArticle).count()
             anomaly_count = session.query(AnomalyEvent).count()
             
-            # Get latest price
-            latest_price = session.query(PriceData).order_by(
-                PriceData.timestamp.desc()
-            ).first()
-            
+            latest_price = session.query(PriceData).order_by(PriceData.timestamp.desc()).first()
             price_info = ""
             if latest_price:
                 price_info = (
-                    f"\n<b>💰 Latest Price</b>\n"
+                    f"\n<b>💰 Kuotasi Terakhir</b>\n"
                     f"• {latest_price.symbol}: ${latest_price.price:,.2f}\n"
-                    f"• Updated: {format_wib_short(latest_price.timestamp)}"
+                    f"• Diperbarui pada: {format_wib_short(latest_price.timestamp)}"
                 )
             
             stats = get_alert_stats()
             metrics = pipeline_metrics.get_metrics()
             
             text = (
-                f"📊 <b>SYSTEM STATUS</b>\n"
+                f"📊 <b>DIAGNOSTIK SISTEM</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ <b>Pipeline:</b> Running\n"
-                f"🕐 <b>Time:</b> {format_wib(now_wib())}\n"
-                f"\n<b>📈 Database Records</b>\n"
-                f"• Price Data: {price_count:,}\n"
-                f"• News Articles: {news_count:,}\n"
-                f"• Anomalies: {anomaly_count}\n"
+                f"✅ <b>Status:</b> Beroperasi\n"
+                f"🕐 <b>Waktu:</b> {format_wib(now_wib())}\n"
+                f"\n<b>📈 Akuisisi Data Basis Data</b>\n"
+                f"• Volume Harga: {price_count:,}\n"
+                f"• Volume Berita: {news_count:,}\n"
+                f"• Indikasi Anomali: {anomaly_count}\n"
                 f"{price_info}\n"
-                f"\n<b>🔔 Alert Stats (Today)</b>\n"
-                f"• Total Sent: {stats['total_sent']}\n"
-                f"• Anomalies: {stats['anomalies']}\n"
-                f"• News Alerts: {stats['news_alerts']}\n"
-                f"• Price Spikes: {stats['price_spikes']}\n"
-                f"\n<b>📡 Pipeline Metrics</b>\n"
-                f"• Records Processed: {metrics.get('records_processed', 0):,}\n"
-                f"• Anomalies Detected: {metrics.get('anomalies_detected', 0)}\n"
-                f"• Errors: {metrics.get('errors', 0)}\n"
-                f"\n💡 <i>All systems operational!</i>"
+                f"\n<b>🔔 Rekapitulasi Peringatan (Harian)</b>\n"
+                f"• Total Terkirim: {stats['total_sent']}\n"
+                f"• Anomali Terdeteksi: {stats['anomalies']}\n"
+                f"• Peringatan Berita: {stats['news_alerts']}\n"
+                f"• Lonjakan Harga: {stats['price_spikes']}\n"
+                f"\n<b>📡 Metrik Internal</b>\n"
+                f"• Baris Diproses: {metrics.get('records_processed', 0):,}\n"
+                f"• Kesalahan Teknis: {metrics.get('errors', 0)}\n"
             )
             
-            _send_message(text)
-            
+            _send_direct_message(chat_id, text)
         finally:
             session.close()
-            
     except Exception as e:
         logger.error("telegram_status_command_error", error=str(e))
-        text = (
-            f"❌ <b>Status Check Error</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"<code>{_sanitize_error(str(e))}</code>"
-        )
-        _send_message(text)
+        text = f"❌ <b>Kesalahan Diagnostik</b>\n<code>{_sanitize_error(str(e))}</code>"
+        _send_direct_message(chat_id, text)
 
 
-def handle_help_command():
-    """Handle /help command - show available commands."""
+def handle_help_command(chat_id: str = None):
+    """Memberikan panduan penggunaan fitur interaktif Telegram."""
+    chat_id = chat_id or TELEGRAM_CHAT_ID
     text = (
-        f"ℹ️ <b>AVAILABLE COMMANDS</b>\n"
+        f"ℹ️ <b>PANDUAN INSTRUKSI OPERASIONAL</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"\n<b>📊 Trading & Analysis</b>\n"
-        f"• <code>/predict</code> - Get AI trading signal (BUY/SELL/HOLD)\n"
-        f"• <code>/predict BTCUSDT</code> - Predict specific symbol\n"
-        f"\n<b>📈 System Info</b>\n"
-        f"• <code>/status</code> - Pipeline status & stats\n"
-        f"• <code>/help</code> - Show this help message\n"
-        f"\n<b>🔔 Auto Alerts</b>\n"
-        f"You will automatically receive:\n"
-        f"• 🟢 Positive news alerts\n"
-        f"• 🔴 Negative news alerts\n"
-        f"• 💹 Price spike alerts\n"
-        f"• 📊 Volume surge alerts\n"
-        f"• 🚨 Anomaly detections\n"
-        f"\n💡 <i>Bot running 24/7!</i>\n"
+        f"\n<b>📊 Analitik Instan</b>\n"
+        f"• <code>/predict</code> - Akses sinyal prediksi berbasis komputasi cerdas (LSTM)\n"
+        f"• <code>/predict BTCUSDT</code> - Memilih instrumen secara kustom\n"
+        f"\n<b>📈 Diagnostik Infrastruktur</b>\n"
+        f"• <code>/status</code> - Menampilkan evaluasi kinerja sistem waktu nyata\n"
+        f"• <code>/help</code> - Panduan bantuan interaktif\n"
+        f"\n<b>🔔 Mekanisme Peringatan Otomatis</b>\n"
+        f"Tersedia untuk indikasi terkait sentimen berita, fluktuasi harga ekstrem, dan anomali pasar kualitatif.\n"
         f"🕐 {format_wib_short(now_wib())}"
     )
-    
-    _send_message(text)
+    _send_direct_message(chat_id, text)
 
 
 def start_bot_listener():
-    """
-    Start listening for Telegram commands.
-    Polls Telegram API for updates and handles commands.
-    Run this in background: python monitoring/telegram_alert.py
-    """
+    """Menginisialisasi proses pendengar (polling) untuk mengevaluasi input perintah dari pengguna melalui platform Telegram."""
     if not _is_configured():
         logger.warning("telegram_bot_not_configured")
-        print("⚠️  Telegram bot not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
+        print("Peringatan: API Token Telegram belum dikonfigurasi pada environment variable.")
         return
     
     logger.info("telegram_bot_listener_started")
     print("\n" + "="*60)
-    print("🤖 Telegram Bot Listener Started")
+    print("Mekanisme pendengar Telegram telah terinisialisasi.")
     print("="*60)
-    print(f"Bot Token: {TELEGRAM_BOT_TOKEN[:10]}...{TELEGRAM_BOT_TOKEN[-5:]}")
-    print(f"Chat ID: {TELEGRAM_CHAT_ID}")
-    print("\n📱 Available Commands:")
-    print("  /predict - Get AI trading signal")
-    print("  /status - System status")
-    print("  /help - Show help")
-    print("\n🔔 Auto-alerts enabled for news sentiment!")
-    print("\n⏹️  Press Ctrl+C to stop")
-    print("="*60 + "\n")
     
     offset = None
-    
     try:
         while True:
             try:
-                # Poll for updates
                 params = {"timeout": 30, "allowed_updates": ["message"]}
                 if offset:
                     params["offset"] = offset
                 
-                response = requests.get(
-                    f"{TELEGRAM_API_URL}/getUpdates",
-                    params=params,
-                    timeout=35
-                )
+                response = requests.get(f"{TELEGRAM_API_URL}/getUpdates", params=params, timeout=35)
                 
                 if response.status_code != 200:
-                    logger.warning("telegram_poll_failed", status=response.status_code)
                     continue
                 
                 data = response.json()
-                
                 if not data.get("ok"):
                     continue
                 
-                updates = data.get("result", [])
-                
-                for update in updates:
+                for update in data.get("result", []):
                     offset = update["update_id"] + 1
-                    
                     message = update.get("message")
                     if not message or "text" not in message:
                         continue
@@ -715,97 +679,55 @@ def start_bot_listener():
                     text = message["text"].strip()
                     chat_id = str(message["chat"]["id"])
                     
-                    # Only respond to configured chat
-                    if chat_id != TELEGRAM_CHAT_ID:
-                        continue
-                    
-                    logger.info("telegram_command_received", command=text)
-                    print(f"📨 Command: {text}")
-                    
-                    # Handle commands
                     if text.startswith("/predict"):
                         parts = text.split()
                         symbol = parts[1] if len(parts) > 1 else "BTCUSDT"
-                        handle_predict_command(symbol.upper())
+                        handle_predict_command(chat_id, symbol.upper())
                     elif text == "/status":
-                        handle_status_command()
+                        handle_status_command(chat_id)
                     elif text == "/help" or text == "/start":
-                        handle_help_command()
+                        handle_help_command(chat_id)
                     else:
-                        # Unknown command
-                        _send_message(
-                            f"❓ Unknown command: <code>{text}</code>\n\n"
-                            f"Use /help to see available commands."
-                        )
-                
+                        _send_direct_message(chat_id, f"Instruksi tidak dikenali: <code>{text}</code>. Silakan gunakan /help.")
+                        
             except requests.exceptions.Timeout:
-                # Normal timeout, continue polling
                 continue
             except requests.exceptions.RequestException as e:
-                logger.error("telegram_poll_error", error=str(e))
                 time.sleep(5)
-                continue
             except Exception as e:
-                logger.error("telegram_listener_error", error=str(e))
                 time.sleep(5)
                 
     except KeyboardInterrupt:
         logger.info("telegram_bot_listener_stopped")
-        print("\n🛑 Bot listener stopped")
+        print("\nSistem pendengar dinonaktifkan secara manual.")
 
-
-import time
-
-# ──────────────────────────────────────────────────────────────────────
-# Self-test
-# ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Telegram Bot for Crypto Pipeline")
-    parser.add_argument("--test", action="store_true", help="Send test message")
-    parser.add_argument("--listen", action="store_true", help="Start bot listener for commands")
-    parser.add_argument("--predict", type=str, help="Test predict command for symbol")
-    parser.add_argument("--status", action="store_true", help="Test status command")
+    parser = argparse.ArgumentParser(description="Modul Interaksi Telegram")
+    parser.add_argument("--test", action="store_true", help="Menginisiasi transmisi pesan uji coba")
+    parser.add_argument("--listen", action="store_true", help="Mengaktifkan proses pendengar untuk interaksi dua arah")
+    parser.add_argument("--predict", type=str, help="Menjalankan uji sintesis prediksi sinyal perdagangan")
+    parser.add_argument("--status", action="store_true", help="Mengambil diagnostik status sistem")
     
     args = parser.parse_args()
     
     if not _is_configured():
-        print("❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in .env")
-        print("   Set them first, then run this script again.")
+        print("Variabel lingkungan Telegram (Token dan Chat ID) belum diatur. Harap evaluasi konfigurasi .env.")
         sys.exit(1)
     
     if args.listen:
-        # Start bot listener
         start_bot_listener()
     elif args.predict:
-        # Test predict command
-        handle_predict_command(args.predict.upper())
+        handle_predict_command(symbol=args.predict.upper())
     elif args.status:
-        # Test status command
         handle_status_command()
     elif args.test:
-        # Send test message
-        print("Sending test alert to Telegram...")
         success = _send_message(
-            "🧪 <b>TEST ALERT</b>\n"
+            "🧪 <b>UJI COBA SISTEM</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "If you see this, Telegram alerts are working!\n"
-            f"🕐 {format_wib(now_wib())}\n"
-            f"\n💡 Try commands:\n"
-            f"• /predict - Get trading signal\n"
-            f"• /status - System status\n"
-            f"• /help - Show help"
+            "Sistem peringatan Telegram telah berfungsi dengan optimal.\n"
+            f"🕐 {format_wib(now_wib())}"
         )
-        print(f"Result: {'✅ Success' if success else '❌ Failed'}")
+        print(f"Hasil Eksekusi: {'Berhasil' if success else 'Gagal'}")
     else:
-        # Show usage
-        print("\n🤖 Telegram Bot for Crypto Pipeline\n")
-        print("Usage:")
-        print("  python monitoring/telegram_alert.py --test      # Test connection")
-        print("  python monitoring/telegram_alert.py --listen    # Start bot listener")
-        print("  python monitoring/telegram_alert.py --predict BTCUSDT  # Test predict")
-        print("  python monitoring/telegram_alert.py --status    # Test status")
-        print("\nMake sure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set in .env")
-
+        print("Argumen tidak memadai. Harap jalankan menggunakan argumen seperti --listen, --test, --status, atau --predict.")

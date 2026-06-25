@@ -1,3 +1,8 @@
+"""
+Modul akuisisi sindikasi berita RSS dan ekstraksi sentimen awal.
+Mengumpulkan artikel dari berbagai sumber media kripto, melakukan perhitungan sentimen berbasis VADER,
+dan menyimpannya untuk keperluan analitik lanjutan.
+"""
 import feedparser
 import time
 import os
@@ -14,7 +19,6 @@ from ml.models.sentiment_vader import analyze_sentiment_vader
 from dotenv import load_dotenv
 
 load_dotenv()
-
 logger = get_logger(__name__)
 
 RSS_FEEDS = {
@@ -31,15 +35,15 @@ POLL_INTERVAL_SECONDS = int(os.getenv("NEWS_POLL_INTERVAL", "600"))
 
 
 class RSSBatchProcessor:
+    """Mesin agregasi dokumen berbasis RSS untuk otomatisasi pengumpulan artikel."""
 
     def __init__(self, feeds: Dict[str, str] = None):
         self.feeds = feeds or RSS_FEEDS
         logger.info("rss_batch_processor_initialized", feeds=list(self.feeds.keys()))
 
     def fetch_feed(self, source: str, url: str) -> List[Dict]:
+        """Mengunduh dan mengekstrak materi berita dari kanal yang ditentukan."""
         try:
-            logger.info("fetching_rss_feed", source=source, url=url)
-
             import requests
             resp = requests.get(url, timeout=15, headers={
                 "User-Agent": "Mozilla/5.0 (CryptoPipeline/1.0; RSS Reader)"
@@ -53,7 +57,6 @@ class RSSBatchProcessor:
                 logger.debug("bronze_rss_save_skipped", error=str(e))
 
             feed = feedparser.parse(resp.content)
-
             articles = []
             for entry in feed.entries:
                 article = {
@@ -66,7 +69,6 @@ class RSSBatchProcessor:
                 articles.append(article)
 
             metrics.increment("api_calls")
-            logger.info("rss_feed_fetched", source=source, articles_count=len(articles))
             return articles
 
         except Exception as e:
@@ -82,6 +84,7 @@ class RSSBatchProcessor:
             return datetime.utcnow()
 
     def process_articles(self, articles: List[Dict]) -> int:
+        """Memproses, menganalisis sentimen, dan merekam artikel berita ke dalam basis data terpusat."""
         saved_count = 0
 
         for article in articles:
@@ -96,11 +99,9 @@ class RSSBatchProcessor:
                     saved_count += 1
                     metrics.increment("records_processed")
                     
-                    # Send Telegram alert for significant sentiment
                     try:
                         from monitoring.telegram_alert import send_news_sentiment_alert
                         score = sentiment['compound']
-                        # Alert for strong positive (>0.5) or strong negative (<-0.5)
                         if abs(score) > 0.5:
                             send_news_sentiment_alert(
                                 source=article['source'],
@@ -117,6 +118,7 @@ class RSSBatchProcessor:
         return saved_count
 
     def run_batch(self):
+        """Mengeksekusi proses pengumpulan data dalam satu tahapan (batch)."""
         logger.info("batch_processing_started")
         total_saved = 0
 
@@ -124,26 +126,17 @@ class RSSBatchProcessor:
             articles = self.fetch_feed(source, url)
             saved = self.process_articles(articles)
             total_saved += saved
-            logger.info("feed_processed", source=source, saved=saved)
             time.sleep(1)
 
         logger.info("batch_processing_completed", total_saved=total_saved)
         return total_saved
 
     def run_continuous(self, poll_interval: int = None):
+        """Menjalankan loop penarikan berita secara sekuensial dan terjadwal."""
         interval = poll_interval or POLL_INTERVAL_SECONDS
         cycle_count = 0
 
-        logger.info("news_continuous_polling_started",
-                     feeds=list(self.feeds.keys()),
-                     poll_interval_seconds=interval)
-
-        print(f"\n{'='*60}")
-        print(f"  RSS News Continuous Scraper")
-        print(f"  Feeds: {', '.join(self.feeds.keys())}")
-        print(f"  Poll interval: {interval}s ({interval // 60} min)")
-        print(f"  Total feeds: {len(self.feeds)}")
-        print(f"{'='*60}\n")
+        logger.info("news_continuous_polling_started", feeds=list(self.feeds.keys()), poll_interval_seconds=interval)
 
         while True:
             try:
@@ -154,21 +147,13 @@ class RSSBatchProcessor:
                     articles = self.fetch_feed(source, url)
                     saved = self.process_articles(articles)
                     total_saved += saved
-                    logger.info("feed_processed", source=source, saved=saved)
                     time.sleep(random.uniform(1, 3))
 
-                logger.info("news_poll_cycle_complete",
-                            cycle=cycle_count,
-                            total_saved=total_saved)
-
-                print(f"[Cycle {cycle_count}] Saved {total_saved} new articles. "
-                      f"Next poll in {interval}s...")
-
+                logger.info("news_poll_cycle_complete", cycle=cycle_count, total_saved=total_saved)
                 time.sleep(interval)
 
             except KeyboardInterrupt:
                 logger.info("news_continuous_polling_stopped_by_user")
-                print("\nNews scraper stopped.")
                 break
             except Exception as e:
                 logger.error("news_poll_cycle_error", error=str(e))
@@ -179,14 +164,14 @@ class RSSBatchProcessor:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="RSS News Scraper")
+    parser = argparse.ArgumentParser(description="Modul Agregasi Sindikasi Berita RSS")
     parser.add_argument(
         "--mode", choices=["batch", "continuous"], default="continuous",
-        help="Run mode: 'batch' for one-shot, 'continuous' for polling loop (default)"
+        help="Mode eksekusi: 'batch' (satu putaran), 'continuous' (loop iteratif)"
     )
     parser.add_argument(
         "--interval", type=int, default=POLL_INTERVAL_SECONDS,
-        help=f"Poll interval in seconds for continuous mode (default: {POLL_INTERVAL_SECONDS})"
+        help=f"Interval jajak pendapat dalam detik (baku: {POLL_INTERVAL_SECONDS})"
     )
     args = parser.parse_args()
 
