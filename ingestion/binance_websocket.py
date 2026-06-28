@@ -23,7 +23,7 @@ load_dotenv()
 logger = get_logger(__name__)
 
 SYMBOLS = ["btcusdt"]
-WS_BASE_URL = "wss://stream.binance.com:9443/ws"
+WS_BASE_URL = "wss://data-stream.binance.vision/ws"
 
 MAX_RECONNECT_DELAY = 120
 INITIAL_RECONNECT_DELAY = 2
