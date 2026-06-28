@@ -82,7 +82,7 @@ python start_production.py
 cd dashboard
 npm install
 npm run dev
-# Open: http://localhost:5173
+# Open: http://134.209.208.11:5173
 ```
 
 ## 📊 Dashboard
@@ -176,7 +176,7 @@ TELEGRAM_CHAT_ID=your-chat-id
 
 ## 📡 API Endpoints
 
-Base URL: `http://localhost:8001`
+Base URL: `http://134.209.208.11:8001`
 
 | Endpoint | Description |
 |----------|-------------|

@@ -96,7 +96,7 @@ Kini Airflow berjalan secara otomatis di dalam kontainer Docker bersama dengan i
 
 1. Pastikan Anda telah menjalankan perintah `docker-compose up -d` (seperti pada Langkah 3).
 2. Airflow Webserver dapat diakses secara lokal melalui browser.
-3. Buka **http://localhost:8080**
+3. Buka **http://134.209.208.11:8080**
 4. Login menggunakan *username*: `admin` dan *password*: `admin`.
 5. Cari DAG bernama `news_batch_pipeline` lalu aktifkan (toggle ke posisi *On*).
 
@@ -117,13 +117,13 @@ Dashboard berfungsi memvisualisasikan seluruh data yang ada di database.
   ```bash
   npm run dev
   ```
-4. Buka browser Anda dan akses: **`http://localhost:5173`**
+4. Buka browser Anda dan akses: **`http://134.209.208.11:5173`**
 
 ---
 
 ## 8. Mengakses Grafana (Monitoring System)
 Grafana sudah diatur agar otomatis terhubung ke PostgreSQL.
-1. Buka browser dan masuk ke **`http://localhost:3000`**
+1. Buka browser dan masuk ke **`http://134.209.208.11:3000`**
 2. Login dengan kredensial:
   - **Username**: `admin`
   - **Password**: `admin`

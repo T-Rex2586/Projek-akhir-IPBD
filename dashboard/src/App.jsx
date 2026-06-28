@@ -8,7 +8,7 @@ import LiquidityHeatmap from './components/LiquidityHeatmap';
 import TopicBubbleChart from './components/TopicBubbleChart';
 import DivergenceGauge from './components/DivergenceGauge';
 
-const API_BASE_URL = 'http://localhost:8001';
+const API_BASE_URL = 'http://134.209.208.11:8001';
 const API_KEY = 'ak_58bb132b5b975898f1a11858d811d01438391693bb363204ad53e41dba4618c2';
 
 const api = axios.create({

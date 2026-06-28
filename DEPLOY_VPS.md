@@ -16,8 +16,11 @@ Masuk ke VPS Anda melalui SSH, lalu jalankan perintah-perintah berikut untuk men
 # 1. Update sistem
 sudo apt update && sudo apt upgrade -y
 
-# 2. Install Python, Git, dan tools dasar
-sudo apt install python3 python3-pip python3-venv git curl -y
+# 2. Install Python 3.11, Git, dan tools dasar
+sudo apt install software-properties-common -y
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+sudo apt install python3.11 python3.11-venv python3.11-dev python3-pip git curl -y
 
 # 3. Install Docker & Docker Compose
 sudo apt install docker.io docker-compose -y
@@ -40,8 +43,8 @@ Ambil kode Anda dari GitHub (karena sudah kita push sebelumnya):
 git clone https://github.com/T-Rex2586/Projek-akhir-IPBD.git
 cd Projek-akhir-IPBD
 
-# Buat Virtual Environment Python
-python3 -m venv venv
+# Buat Virtual Environment Python 3.11
+python3.11 -m venv venv
 source venv/bin/activate
 
 # Install requirements Python

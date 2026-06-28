@@ -123,7 +123,7 @@ def start_api():
       )
     
     print(" Menunggu verifikasi respons API...")
-    api_url = os.getenv("API_BASE_URL", "http://localhost:8001")
+    api_url = os.getenv("API_BASE_URL", "http://134.209.208.11:8001")
     
     for attempt in range(15):
       try:
@@ -145,8 +145,48 @@ def start_api():
     print(f" Kesalahan pemanggilan API: {e}")
     return False
 
+def start_telegram_bot():
+  print_step(5, "Eksekusi Bot Telegram")
+  try:
+    if os.name == 'nt':
+      process = subprocess.Popen(
+        [sys.executable, 'scripts/start_telegram_bot.py'],
+        creationflags=subprocess.CREATE_NEW_CONSOLE
+      )
+    else:
+      process = subprocess.Popen(
+        [sys.executable, 'scripts/start_telegram_bot.py'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+      )
+    print(" Bot Telegram berhasil diinisialisasi")
+    return True
+  except Exception as e:
+    print(f" Kesalahan eksekusi Bot Telegram: {e}")
+    return False
+
+def start_gold_processor():
+  print_step(6, "Eksekusi Pemrosesan Gold Layer")
+  try:
+    if os.name == 'nt':
+      process = subprocess.Popen(
+        [sys.executable, 'processing/gold_processor.py'],
+        creationflags=subprocess.CREATE_NEW_CONSOLE
+      )
+    else:
+      process = subprocess.Popen(
+        [sys.executable, 'processing/gold_processor.py'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+      )
+    print(" Gold Processor berhasil diinisialisasi")
+    return True
+  except Exception as e:
+    print(f" Kesalahan eksekusi Gold Processor: {e}")
+    return False
+
 def wait_for_data():
-  print_step(5, "Verifikasi Agregasi Data Perdana")
+  print_step(7, "Verifikasi Agregasi Data Perdana")
   print(" Menghimpun kuotasi historis Bitcoin...")
   print("  Dibutuhkan sekitar 2-3 menit untuk membentuk struktur kardinal")
   
@@ -182,12 +222,12 @@ def show_instructions():
   print("  ")
   print("  cd dashboard && npm run dev")
   print("  ")
-  print("  Selanjutnya akses alamat URL: http://localhost:5173")
+  print("  Selanjutnya akses alamat URL: http://134.209.208.11:5173")
   
   print("\n INTERFACE LAYANAN (API):")
-  print("  Dokumentasi API: http://localhost:8001/docs")
-  print("  Metrik Status: http://localhost:8001/health")
-  print("  Alamat Sentral: http://localhost:8001")
+  print("  Dokumentasi API: http://134.209.208.11:8001/docs")
+  print("  Metrik Status: http://134.209.208.11:8001/health")
+  print("  Alamat Sentral: http://134.209.208.11:8001")
   
   print("\n FITUR TERINTEGRASI:")
   print("  Penilaian presisi waktu nyata 1 detik")
@@ -223,6 +263,9 @@ def main():
   if not start_api():
     print("\n KEGAGALAN: Layanan API tak beroperasi selayaknya")
     return False
+  
+  start_telegram_bot()
+  start_gold_processor()
   
   wait_for_data()
   show_instructions()

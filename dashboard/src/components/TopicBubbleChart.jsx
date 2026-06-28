@@ -9,7 +9,7 @@ const TopicBubbleChart = () => {
   useEffect(() => {
     const fetchTopics = async () => {
       try {
-        const response = await axios.get('http://localhost:8001/news/topics', {
+        const response = await axios.get('http://134.209.208.11:8001/news/topics', {
           headers: { 'X-API-Key': 'ak_58bb132b5b975898f1a11858d811d01438391693bb363204ad53e41dba4618c2' }
         });
         
