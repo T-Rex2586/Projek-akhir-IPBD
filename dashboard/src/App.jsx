@@ -113,7 +113,7 @@ function App() {
       if (!isMounted) return;
       await fetchData();
       if (isMounted) {
-        timer = setTimeout(pollData, 2000);
+        timer = setTimeout(pollData, 10000); // Changed from 2s to 10s to reduce server load
       }
     };
     pollData();

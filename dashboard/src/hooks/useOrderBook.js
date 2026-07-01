@@ -17,7 +17,7 @@ export function useOrderBook(symbol = 'BTCUSDT') {
     let isMounted = true;
 
     const connect = () => {
-      ws.current = new WebSocket(`wss://data-stream.binance.vision/ws/${symbol.toLowerCase()}@depth20@100ms`);
+      ws.current = new WebSocket(`wss://data-stream.binance.vision/ws/${symbol.toLowerCase()}@depth20@1000ms`);
 
       ws.current.onopen = () => {
         if (isMounted) {

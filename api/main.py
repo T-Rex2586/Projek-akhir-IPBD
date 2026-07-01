@@ -214,8 +214,14 @@ def get_prices(symbol: str, hours: int = 24, api_key: str = Depends(verify_api_k
                 logger.error("kline_fallback_failed", error=str(e))
             finally:
                 session.close()
-        else:
-            logger.info("prices_from_pricedata", symbol=symbol, count=len(prices))
+        if len(prices) > 500:
+            step = len(prices) // 500
+            # Ensure the last point is always included for current price accuracy
+            sampled_prices = prices[::step]
+            if prices[-1] not in sampled_prices:
+                sampled_prices.append(prices[-1])
+            prices = sampled_prices
+            logger.info("prices_downsampled", symbol=symbol, original=len(prices)*step, new=len(prices))
         
         return prices
     except Exception as e:
