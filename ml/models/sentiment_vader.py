@@ -10,6 +10,24 @@ except LookupError:
     nltk.download('vader_lexicon', quiet=True)
 sia = SentimentIntensityAnalyzer()
 
+# Menambahkan lexicon khusus istilah cryptocurrency untuk akurasi domain-specific
+crypto_lexicon = {
+    'bullish': 2.0, 
+    'bearish': -2.0, 
+    'dump': -2.5, 
+    'pump': 2.0, 
+    'whale': 0.5, 
+    'moon': 2.5, 
+    'fud': -2.5, 
+    'rekt': -3.0,
+    'ath': 2.0,
+    'atl': -2.0,
+    'scam': -3.0,
+    'rugpull': -3.0
+}
+sia.lexicon.update(crypto_lexicon)
+
+
 def analyze_sentiment_vader(text: str) -> Dict:
     scores = sia.polarity_scores(text)
     compound = scores['compound']
