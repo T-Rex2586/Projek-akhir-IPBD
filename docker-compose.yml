@@ -185,7 +185,7 @@ services:
       -c max_wal_senders=10
       -c max_replication_slots=10
     ports:
-      - "5435:5432"
+      - "127.0.0.1:5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d
